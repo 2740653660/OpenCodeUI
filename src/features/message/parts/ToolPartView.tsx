@@ -193,7 +193,7 @@ export const ToolPartView = memo(function ToolPartView({
   const bodyContent = (
     <>
       {!hideToolBodyForPermission && (
-        <ToolBody part={part} data={toolData} onFullscreenChange={handleFullscreenChange} />
+        <ToolBody part={part} data={toolData} isVisible={effectiveExpanded} onFullscreenChange={handleFullscreenChange} />
       )}
       {displayPermission && (
         <div className={hideToolBodyForPermission && !permissionContentHidden ? '' : 'pt-2'}>
@@ -518,30 +518,32 @@ function computeDiffPair(before: string, after: string): { additions: number; de
 const ToolBody = memo(function ToolBody({
   part,
   data,
+  isVisible = true,
   onFullscreenChange,
 }: {
   part: ToolPart
   data: ReturnType<typeof extractToolData>
+  isVisible?: boolean
   onFullscreenChange?: (isFullscreen: boolean) => void
 }) {
   const { tool } = part
   const lowerTool = tool.toLowerCase()
 
   if (lowerTool === 'task') {
-    return <TaskRenderer part={part} data={data} onFullscreenChange={onFullscreenChange} />
+    return <TaskRenderer part={part} data={data} isVisible={isVisible} onFullscreenChange={onFullscreenChange} />
   }
 
   if (lowerTool.includes('todo') && hasTodos(part)) {
-    return <TodoRenderer part={part} data={data} onFullscreenChange={onFullscreenChange} />
+    return <TodoRenderer part={part} data={data} isVisible={isVisible} onFullscreenChange={onFullscreenChange} />
   }
 
   const config = getToolConfig(tool)
   if (config?.renderer) {
     const CustomRenderer = config.renderer
-    return <CustomRenderer part={part} data={data} onFullscreenChange={onFullscreenChange} />
+    return <CustomRenderer part={part} data={data} isVisible={isVisible} onFullscreenChange={onFullscreenChange} />
   }
 
-  return <DefaultRenderer part={part} data={data} onFullscreenChange={onFullscreenChange} />
+  return <DefaultRenderer part={part} data={data} isVisible={isVisible} onFullscreenChange={onFullscreenChange} />
 })
 
 function getTaskChildSessionId(part: ToolPart): string | undefined {

@@ -22,7 +22,7 @@ import type { ToolRendererProps } from '../types'
 // Main
 // ============================================
 
-export function BashRenderer({ part, data, onFullscreenChange }: ToolRendererProps) {
+export function BashRenderer({ part, data, isVisible = true, onFullscreenChange }: ToolRendererProps) {
   const { t } = useTranslation(['components'])
   const { state } = part
   const isActive = state.status === 'running' || state.status === 'pending'
@@ -71,6 +71,7 @@ export function BashRenderer({ part, data, onFullscreenChange }: ToolRendererPro
           isDone={isDone}
           exitCode={exitCode}
           outputKey={output ?? ''}
+          isVisible={isVisible}
           fullHeight
           isFullscreen
           onToggleFullscreen={handleCloseFullscreen}
@@ -88,6 +89,7 @@ export function BashRenderer({ part, data, onFullscreenChange }: ToolRendererPro
       hasOutput,
       isActive,
       isDone,
+      isVisible,
       output,
       outputSegments,
       t,
@@ -120,6 +122,7 @@ export function BashRenderer({ part, data, onFullscreenChange }: ToolRendererPro
       isDone={isDone}
       exitCode={exitCode}
       outputKey={output ?? ''}
+      isVisible={isVisible}
       maxHeight={isFullscreen ? undefined : maxHeight}
       fullHeight={isFullscreen}
       isFullscreen={isFullscreen}
@@ -147,6 +150,7 @@ function TerminalSurface({
   isDone,
   exitCode,
   outputKey,
+  isVisible,
   maxHeight,
   fullHeight = false,
   isFullscreen = false,
@@ -163,6 +167,7 @@ function TerminalSurface({
   isDone: boolean
   exitCode?: number
   outputKey: string
+  isVisible: boolean
   maxHeight?: number | string
   fullHeight?: boolean
   isFullscreen?: boolean
@@ -173,6 +178,7 @@ function TerminalSurface({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  const [visibilityRefreshKey, setVisibilityRefreshKey] = useState(0)
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
@@ -187,6 +193,31 @@ function TerminalSurface({
     el.scrollTop = el.scrollHeight
   }, [isActive, outputKey])
 
+  useEffect(() => {
+    if (!isVisible) return
+
+    let secondFrameId: number | null = null
+    const refresh = () => {
+      const el = scrollRef.current
+      if (!el) return
+      void el.offsetHeight
+      if (isAtBottomRef.current) el.scrollTop = el.scrollHeight
+      setVisibilityRefreshKey(value => value + 1)
+    }
+
+    const firstFrameId = requestAnimationFrame(() => {
+      refresh()
+      secondFrameId = requestAnimationFrame(refresh)
+    })
+    const transitionTimerId = window.setTimeout(refresh, 320)
+
+    return () => {
+      cancelAnimationFrame(firstFrameId)
+      if (secondFrameId !== null) cancelAnimationFrame(secondFrameId)
+      window.clearTimeout(transitionTimerId)
+    }
+  }, [isVisible])
+
   return (
     <div
       className={`rounded-md border border-border-200/40 bg-bg-100 overflow-hidden font-mono text-[length:var(--fs-code)] leading-[1.6] ${
@@ -196,6 +227,7 @@ function TerminalSurface({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        data-visibility-refresh={visibilityRefreshKey}
         className={`px-3 py-2 overflow-y-auto custom-scrollbar ${fullHeight ? 'flex-1 min-h-0' : ''}`}
         style={fullHeight ? undefined : { maxHeight }}
       >
