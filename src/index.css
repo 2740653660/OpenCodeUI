@@ -528,6 +528,12 @@ body {
   white-space: nowrap;
 }
 
+/* 强制 GPU 合成层，绕过 contain: paint 的绘制优化 */
+.backface-visibility-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
 /* ============================================
  * 全局 Overlay Scrollbar
  * ============================================

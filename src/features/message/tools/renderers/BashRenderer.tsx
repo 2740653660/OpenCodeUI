@@ -228,7 +228,7 @@ function TerminalSurface({
         ref={scrollRef}
         onScroll={handleScroll}
         data-visibility-refresh={visibilityRefreshKey}
-        className={`px-3 py-2 overflow-y-auto custom-scrollbar ${fullHeight ? 'flex-1 min-h-0' : ''}`}
+        className={`px-3 py-2 overflow-y-auto custom-scrollbar backface-visibility-hidden ${fullHeight ? 'flex-1 min-h-0' : ''}`}
         style={fullHeight ? undefined : { maxHeight }}
       >
         <div className="flex min-w-0 items-baseline gap-2">
