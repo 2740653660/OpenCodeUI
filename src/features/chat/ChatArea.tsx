@@ -703,6 +703,21 @@ export const ChatArea = memo(
 
       const updateMeasuredPageHeight = useCallback((pageKey: string, nextHeight: number) => {
         if (nextHeight <= 0) return
+        const knownHeight = measuredPageHeightsRef.current[pageKey] ?? null
+        if (knownHeight === null) {
+          setMeasuredPageHeights(previous => {
+            if (previous[pageKey] != null) {
+              measuredPageHeightsRef.current = previous
+              return previous
+            }
+            const next = { ...previous, [pageKey]: nextHeight }
+            measuredPageHeightsRef.current = next
+            return next
+          })
+          return
+        }
+
+        if (Math.abs(knownHeight - nextHeight) < 1) return
         // 入队而非立即 setState——同帧内多个 ResizeObserver 回调
         // 会合并为一次 setMeasuredPageHeights，避免每 token 级联重渲染
         pendingHeightUpdatesRef.current.set(pageKey, nextHeight)
