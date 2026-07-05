@@ -220,7 +220,7 @@ function TerminalSurface({
 
   return (
     <div
-      className={`rounded-md border border-border-200/40 bg-bg-100 overflow-hidden font-mono text-[length:var(--fs-code)] leading-[1.6] ${
+      className={`rounded-md border border-border-200/40 bg-bg-100 overflow-clip font-mono text-[length:var(--fs-code)] leading-[1.6] ${
         fullHeight ? 'h-full flex flex-col' : ''
       }`}
     >
@@ -228,7 +228,7 @@ function TerminalSurface({
         ref={scrollRef}
         onScroll={handleScroll}
         data-visibility-refresh={visibilityRefreshKey}
-        className={`px-3 py-2 overflow-y-auto custom-scrollbar backface-visibility-hidden ${fullHeight ? 'flex-1 min-h-0' : ''}`}
+        className={`px-3 py-2 overflow-y-auto custom-scrollbar ${fullHeight ? 'flex-1 min-h-0' : ''}`}
         style={fullHeight ? undefined : { maxHeight }}
       >
         <div className="flex min-w-0 items-baseline gap-2">

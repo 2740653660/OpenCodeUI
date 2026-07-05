@@ -1213,7 +1213,7 @@ const PageBlock = memo(function PageBlock({
   const wrapperRef = usePageHeightMeasurement(page.key, onMeasuredHeightChange)
 
   return (
-    <div ref={wrapperRef} className="shrink-0 contain-layout-style" data-page-key={page.key}>
+    <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
       {page.rows.map(row => {
         const isUser = row.messages[0].info.role === 'user'
         return (

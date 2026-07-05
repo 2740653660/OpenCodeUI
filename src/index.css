@@ -528,12 +528,6 @@ body {
   white-space: nowrap;
 }
 
-/* 强制 GPU 合成层，绕过 contain: paint 的绘制优化 */
-.backface-visibility-hidden {
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
 /* ============================================
  * 全局 Overlay Scrollbar
  * ============================================
@@ -824,11 +818,6 @@ body {
 /* 内容隔离（用于动态内容区域） */
 .contain-content {
   contain: content;
-}
-
-/* 布局+样式隔离（不含 paint），用于需要隔离布局回流但不影响绘制裁剪的场景 */
-.contain-layout-style {
-  contain: layout style;
 }
 
 /* ============================================

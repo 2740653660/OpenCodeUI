@@ -384,7 +384,7 @@ const SubSessionView = memo(function SubSessionView({ sessionId }: SubSessionVie
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-y-auto custom-scrollbar backface-visibility-hidden px-3 py-2 space-y-2"
+        className="overflow-y-auto custom-scrollbar px-3 py-2 space-y-2"
         style={{ maxHeight: subSessionMaxHeight }}
       >
         {visibleMessages.map((msg: Message, idx: number) => (
