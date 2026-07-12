@@ -9,8 +9,16 @@ function messageHasContent(message: Message): boolean {
     return isAbortedMessage(message.info) ? hasRenderable : true
   }
   if (message.parts.length === 0) {
-    // 任何角色的空消息都不可见：没有内容可展示
-    // part 到达后自动进入可见列表；abort 后永远不会有 part → 永远不可见
+    // 未完成的空 assistant 仍占位：过程折叠在用户发送后先挂 Working 壳，
+    // 若 assistant 因 parts 为空被滤掉，后续内容会挂在壳外（刷新才复合）。
+    // 空 abort（已 completed）仍不可见。
+    if (
+      message.info.role === 'assistant' &&
+      (message.isStreaming || message.info.time.completed == null) &&
+      !isAbortedMessage(message.info)
+    ) {
+      return true
+    }
     return false
   }
   return hasRenderable

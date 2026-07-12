@@ -988,6 +988,7 @@ export const ChatArea = memo(
                   turnLatestAssistantIds={localTurnLatestAssistantIds}
                   forkTargetIdMap={localForkTargetIdMap}
                   latestUserMessageId={latestUserMessageId}
+                  allVisibleMessages={visibleMessages}
                   sessionIsStreaming={sessionIsStreaming}
                   allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
                   onMeasuredHeightChange={updateMeasuredPageHeight}
@@ -1029,6 +1030,8 @@ interface PageBlockProps {
   forkTargetIdMap: Map<string, string | undefined>
   /** 全局最新用户消息 id；「处理中」只挂这一回合 */
   latestUserMessageId: string | null
+  /** 全局可见消息（过程折叠用：像 tool steps 一样把 user 后的 assistant 收成内容袋） */
+  allVisibleMessages: Message[]
   /** session 级流式：idle 后无活工作的回合不再计时 */
   sessionIsStreaming: boolean
   allowStreamingLayoutAnimation: boolean
@@ -1070,6 +1073,7 @@ export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlock
   }
   if (previous.sessionIsStreaming !== next.sessionIsStreaming) return false
   if (previous.latestUserMessageId !== next.latestUserMessageId) return false
+  if (previous.allVisibleMessages !== next.allVisibleMessages) return false
   if (previous.onMeasuredHeightChange !== next.onMeasuredHeightChange) return false
   return pageMessageDerivedValuesEqual(previous, next)
 }
@@ -1144,6 +1148,7 @@ const PageBlock = memo(function PageBlock({
   turnLatestAssistantIds,
   forkTargetIdMap,
   latestUserMessageId,
+  allVisibleMessages,
   sessionIsStreaming,
   allowStreamingLayoutAnimation,
   onMeasuredHeightChange,
@@ -1166,7 +1171,12 @@ const PageBlock = memo(function PageBlock({
         allowStreamingLayoutAnimation={message.isStreaming ? allowStreamingLayoutAnimation : false}
         turnDuration={turnDurationMap.get(message.info.id)}
         isTurnLatestAssistant={
-          message.info.role === 'assistant' ? turnLatestAssistantIds.has(message.info.id) : undefined
+          // final 位 = 回合末尾展示位
+          immersiveContentScope === 'final'
+            ? true
+            : message.info.role === 'assistant'
+              ? turnLatestAssistantIds.has(message.info.id)
+              : undefined
         }
         immersiveContentScope={immersiveContentScope}
         onUndo={message.info.role === 'user' ? onUndo : undefined}
@@ -1179,20 +1189,23 @@ const PageBlock = memo(function PageBlock({
   )
 
   const renderRowShell = (
-    row: ChatPage['rows'][number],
+    rowKey: string,
     isUser: boolean,
     content: ReactNode,
+    options?: { continuesFromPrevious?: boolean; continuesToNext?: boolean },
   ) => {
-    const verticalPaddingClass = row.continuesFromPrevious
-      ? row.continuesToNext
+    const continuesFromPrevious = options?.continuesFromPrevious ?? false
+    const continuesToNext = options?.continuesToNext ?? false
+    const verticalPaddingClass = continuesFromPrevious
+      ? continuesToNext
         ? 'pt-2 pb-0'
         : 'pt-2 pb-3'
-      : row.continuesToNext
+      : continuesToNext
         ? 'pt-3 pb-0'
         : 'py-3'
     return (
       <div
-        key={row.key}
+        key={rowKey}
         className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} ${verticalPaddingClass} transition-[max-width] duration-300 ease-in-out`}
       >
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -1204,94 +1217,92 @@ const PageBlock = memo(function PageBlock({
     )
   }
 
-  // 过程折叠：按 user → assistants 回合渲染；用户一发送就挂「处理中」计时
+  // 过程折叠：像 tool steps 一样先合成「回合内容袋」，再挂 Working 壳。
+  // 不要只靠 page.rows 切 turn——流式时 assistant 可能还没进本页 rows，会留下空壳。
   if (processCollapseEnabled) {
-    type TurnSeg = {
+    type ProcessTurn = {
       key: string
-      userRows: ChatPage['rows']
-      assistantRows: ChatPage['rows']
+      userMessage: Message | null
+      /** 本回合全部 assistant（全局可见列表上 user 之后到下一 user 之前） */
+      assistants: Message[]
+      /** 本页是否拥有该 user（壳只在 user 所在页挂） */
+      ownsUser: boolean
+      /** 本页是否拥有任一 assistant 内容 */
+      ownsAssistantContent: boolean
     }
-    const turns: TurnSeg[] = []
-    let current: TurnSeg | null = null
-    for (const row of page.rows) {
-      const isUser = row.messages[0]?.info.role === 'user'
-      if (isUser) {
+
+    const pageMessageIdSet = new Set(page.messageIds)
+    const turns: ProcessTurn[] = []
+    let current: ProcessTurn | null = null
+
+    // 用全局可见消息建袋（与 tool follow-up merge 同思路：内容先合，再渲染）
+    for (const message of allVisibleMessages) {
+      if (message.info.role === 'user') {
         if (current) turns.push(current)
-        current = { key: row.key, userRows: [row], assistantRows: [] }
-      } else if (current) {
-        current.assistantRows.push(row)
-      } else {
-        // 页首孤立 assistant（跨页切分）：当作无 user 的回合
-        current = { key: row.key, userRows: [], assistantRows: [row] }
+        current = {
+          key: `turn:${message.info.id}`,
+          userMessage: message,
+          assistants: [],
+          ownsUser: pageMessageIdSet.has(message.info.id),
+          ownsAssistantContent: false,
+        }
+        continue
       }
+      if (message.info.role !== 'assistant') continue
+      if (!current) {
+        // 页首/历史续段：无本页 user 的 assistant 袋
+        current = {
+          key: `turn:orphan:${message.info.id}`,
+          userMessage: null,
+          assistants: [message],
+          ownsUser: false,
+          ownsAssistantContent: pageMessageIdSet.has(message.info.id),
+        }
+        continue
+      }
+      current.assistants.push(message)
+      if (pageMessageIdSet.has(message.info.id)) current.ownsAssistantContent = true
     }
     if (current) turns.push(current)
 
+    // 有 user 的回合：只在 ownsUser 页渲染（全袋），避免 user 页 + assistant 页各渲一遍正文
+    // 无 user 的续段：只在 ownsAssistantContent 页渲染
+    const pageTurns = turns.filter(t =>
+      t.userMessage ? t.ownsUser : t.ownsAssistantContent,
+    )
+
     return (
       <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
-        {turns.map((turn, turnIndex) => {
-          const assistantMessages = turn.assistantRows.flatMap(r => r.messages)
+        {pageTurns.map((turn, turnIndex) => {
+          const assistantMessages = turn.assistants
           const finalAssistant =
             assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null
           const finalAssistantId = finalAssistant?.info.id ?? null
+          const userId = turn.userMessage?.info.id ?? null
+          const isLatestUserTurn = userId != null && userId === latestUserMessageId
 
-          const turnUserMessageIds = turn.userRows.flatMap(row => row.messages.map(m => m.info.id))
-          // 必须用全局最新 user，不能用页内最后一回合（分页时页尾不是会话最新）
-          const isLatestUserTurn =
-            latestUserMessageId != null && turnUserMessageIds.includes(latestUserMessageId)
-          // 本回合是否仍有真实活工作（已 completed 的 assistant 不算活）
           const hasLiveAssistantWork = assistantMessages.some(m => {
-            if (m.info.time.completed != null) return false
-            if (m.isStreaming) return true
-            return m.parts.some(
-              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
-            )
+            if (m.info.time.completed != null) {
+              return m.parts.some(
+                p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
+              )
+            }
+            return true
           })
-          // 最新回合：活工作 或 session 仍 busy（对齐官方 session_working）
-          // 旧回合：只跟本回合真实活工作
           const turnIsActive = isLatestUserTurn
             ? hasLiveAssistantWork || sessionIsStreaming
             : hasLiveAssistantWork
 
-          // 活跃回合：整段 assistant 强制进过程壳，禁止拆 final 裸渲在壳外
-          // （用户发送后空壳 → assistant 先到 parts 为空 → 若拆 all 会永久分家，刷新才复合）
+          // 流式：整袋进壳；结束：壳内过程 + 壳外仅一条 final 正文
+          const forceAllInShell = turnIsActive
           const finalHasProcess = !!finalAssistant && messageHasImmersiveProcess(finalAssistant)
           const finalHasAnswer = !!finalAssistant && messageHasImmersiveFinal(finalAssistant)
-          const processMessages = turnIsActive
-            ? assistantMessages
-            : assistantMessages.filter(m => {
-                if (m.info.id !== finalAssistantId) return true
-                return finalHasProcess
-              })
-          const finalMessages = turnIsActive
-            ? []
-            : finalAssistant && (finalHasAnswer || !finalHasProcess)
-              ? [finalAssistant]
-              : []
 
-          // 用户发送时间：优先 map；否则取本回合 user.created
-          let userStart: number | undefined
-          for (const m of assistantMessages) {
-            const start = turnUserStartMap.get(m.info.id)
-            if (start != null) {
-              userStart = start
-              break
-            }
-          }
-          if (userStart == null) {
-            for (const row of turn.userRows) {
-              const created = row.messages[0]?.info.time.created
-              if (created != null) {
-                userStart = created
-                break
-              }
-            }
-          }
-          if (userStart == null && assistantMessages[0]) {
-            userStart = assistantMessages[0].info.time.created
-          }
+          const userStart =
+            turn.userMessage?.info.time.created ??
+            (finalAssistantId != null ? turnUserStartMap.get(finalAssistantId) : undefined) ??
+            assistantMessages[0]?.info.time.created
 
-          // 整轮结束后的校正时长（真实 steps 墙钟）
           const settledDurationMs = (() => {
             if (turnIsActive || userStart == null) return undefined
             for (const m of [...assistantMessages].reverse()) {
@@ -1312,66 +1323,94 @@ const PageBlock = memo(function PageBlock({
             return undefined
           })()
 
-          // 等首包空壳 + 有过程内容都显示；活跃时 final 已强制清空，不会壳外裸渲
-          const waitingForFirstAssistant = turnIsActive && assistantMessages.length === 0
-          const showProcessBlock = processMessages.length > 0 || waitingForFirstAssistant
-          // 外壳只挂在带 user 的回合；跨页孤立 assistant 不套第二层
-          const wrapProcessShell = turn.userRows.length > 0
-          // key 全程稳定：用 user id，不随 assistant 到达改 key（空壳与内容同一 React 节点）
+          // 壳 + final 正文只在 ownsUser 页挂一次（杜绝双正文）
+          const wrapProcessShell = turn.ownsUser
+          const waitingForFirstAssistant = turnIsActive && assistantMessages.length === 0 && wrapProcessShell
+
+          // 壳内：流式=全袋；结束=中间全进 + 末尾仅过程（final 正文不进壳）
+          const processBodyMessages = (() => {
+            if (!wrapProcessShell) {
+              return assistantMessages.filter(m => pageMessageIdSet.has(m.info.id))
+            }
+            if (forceAllInShell) return assistantMessages
+            return assistantMessages.filter(m => {
+              if (m.info.id !== finalAssistantId) return true
+              // 末尾：有过程才进壳（process scope 会去掉最终 text）
+              return finalHasProcess
+            })
+          })()
+
+          // 壳外正文：仅 user 页、已结束、有最终 text → 恰好一条
+          const showFinalOutside =
+            wrapProcessShell && !forceAllInShell && !!finalAssistant && finalHasAnswer
+
+          const showProcessBlock = processBodyMessages.length > 0 || waitingForFirstAssistant
           const processStateKey =
-            turnUserMessageIds[0] != null
-              ? `turn-process:user:${turnUserMessageIds[0]}`
+            userId != null
+              ? `turn-process:user:${userId}`
               : userStart != null
                 ? `turn-process:start:${userStart}`
                 : `turn-process:key:${turn.key}`
           const processShellKey = `shell:${processStateKey}`
 
-          // 活跃/有过程：最后一条 process，中间 assistant inline，都在壳内
-          const processBody = processMessages.map(message =>
-            renderMessage(message, message.info.id === finalAssistantId ? 'process' : 'inline'),
-          )
+          const processBody = processBodyMessages.map(message => {
+            // 末尾 → process（思考/工具，无最终 text）；中间 → inline（整条在壳内）
+            const scope = message.info.id === finalAssistantId ? ('process' as const) : ('inline' as const)
+            return renderMessage(message, scope)
+          })
+
+          // 孤儿续段：无壳、无 final（final 只在 user 页）
+          if (!wrapProcessShell) {
+            return (
+              <div key={turn.key} className="contents">
+                {renderRowShell(
+                  processShellKey,
+                  false,
+                  <>
+                    {processBodyMessages.map(message =>
+                      renderMessage(
+                        message,
+                        message.info.id === finalAssistantId ? 'process' : 'inline',
+                      ),
+                    )}
+                  </>,
+                  {
+                    continuesFromPrevious: true,
+                    continuesToNext: turnIndex < pageTurns.length - 1,
+                  },
+                )}
+              </div>
+            )
+          }
 
           return (
             <div key={turn.key} className="contents">
-              {turn.userRows.map(row =>
+              {turn.userMessage &&
+                pageMessageIdSet.has(turn.userMessage.info.id) &&
+                renderRowShell(`user:${turn.userMessage.info.id}`, true, renderMessage(turn.userMessage))}
+              {(showProcessBlock || showFinalOutside) &&
                 renderRowShell(
-                  row,
-                  true,
-                  row.messages.map(message => renderMessage(message)),
-                ),
-              )}
-              {(showProcessBlock || finalMessages.length > 0 || turn.assistantRows.length > 0) && (
-                renderRowShell(
-                  {
-                    key: processShellKey,
-                    messages: turn.assistantRows[0]?.messages ?? [],
-                    messageIds: turn.assistantRows[0]?.messageIds ?? [],
-                    estimatedHeight: turn.assistantRows[0]?.estimatedHeight ?? 40,
-                    continuesFromPrevious: turn.assistantRows[0]?.continuesFromPrevious ?? false,
-                    continuesToNext:
-                      turn.assistantRows[0]?.continuesToNext ?? turnIndex < turns.length - 1,
-                  } as ChatPage['rows'][number],
+                  processShellKey,
                   false,
                   <>
-                    {showProcessBlock &&
-                      (wrapProcessShell ? (
-                        <ImmersiveProcessBlock
-                          stateKey={processStateKey}
-                          startedAt={userStart}
-                          durationMs={settledDurationMs}
-                          isActive={turnIsActive}
-                        >
-                          {processBody}
-                        </ImmersiveProcessBlock>
-                      ) : (
-                        <div className="flex flex-col gap-2">{processBody}</div>
-                      ))}
-                    {finalMessages.map(message =>
-                      renderMessage(message, finalHasProcess ? 'final' : 'all'),
+                    {showProcessBlock && (
+                      <ImmersiveProcessBlock
+                        stateKey={processStateKey}
+                        startedAt={userStart}
+                        durationMs={settledDurationMs}
+                        isActive={turnIsActive}
+                      >
+                        {processBody}
+                      </ImmersiveProcessBlock>
                     )}
+                    {/* 壳外只挂这一次 final 正文（final scope 硬过滤无 reasoning） */}
+                    {showFinalOutside && finalAssistant && renderMessage(finalAssistant, 'final')}
                   </>,
-                )
-              )}
+                  {
+                    continuesFromPrevious: false,
+                    continuesToNext: turnIndex < pageTurns.length - 1,
+                  },
+                )}
             </div>
           )
         })}
@@ -1383,11 +1422,10 @@ const PageBlock = memo(function PageBlock({
     <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
       {page.rows.map(row => {
         const isUser = row.messages[0].info.role === 'user'
-        return renderRowShell(
-          row,
-          isUser,
-          row.messages.map(message => renderMessage(message)),
-        )
+        return renderRowShell(row.key, isUser, row.messages.map(message => renderMessage(message)), {
+          continuesFromPrevious: row.continuesFromPrevious,
+          continuesToNext: row.continuesToNext,
+        })
       })}
     </div>
   )

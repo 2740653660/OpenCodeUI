@@ -180,15 +180,15 @@ type ImmersiveSplit = {
 
 /**
  * 把 render items 拆成「过程」和「最终回答」。
- * 最终回答 = 消息中最后一段连续 text（允许后面跟独立 step-finish）。
- * 之前从末尾扫描时若先碰到 step-finish 会误把整段当过程，这里会跳过尾部 chrome。
+ * 最终回答 = 消息中最后一段连续 text + 紧随的独立 step-finish。
+ * reasoning / tool 永远进过程，绝不进 final（防止壳外正文带着思考）。
  */
 export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
   if (items.length === 0) {
     return { processItems: [], finalItems: [], hasProcess: false, hasFinal: false }
   }
 
-  // 从后往前找最后一段可见 text（中间可跳过尾部 step-finish）
+  // 从后往前找最后一段 text（可跳过尾部 step-finish）
   let lastTextIdx = -1
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]
@@ -196,15 +196,11 @@ export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
       lastTextIdx = i
       break
     }
-    if (item.type === 'single' && item.part.type === 'step-finish') {
-      continue
-    }
-    // 末尾是 tool/reasoning 等 → 后面没有最终 text
+    if (item.type === 'single' && item.part.type === 'step-finish') continue
     break
   }
 
   if (lastTextIdx < 0) {
-    // 整段都是过程
     return {
       processItems: items,
       finalItems: [],
@@ -213,7 +209,7 @@ export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
     }
   }
 
-  // 向前扩展连续 text run
+  // 只收尾部连续 text run，不向前吞 reasoning/tool
   let textRunStart = lastTextIdx
   while (textRunStart > 0) {
     const prev = items[textRunStart - 1]
@@ -224,7 +220,6 @@ export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
     break
   }
 
-  // 文本后的独立 step-finish 跟最终回答走（不进过程块）
   let textRunEnd = lastTextIdx
   while (textRunEnd + 1 < items.length) {
     const next = items[textRunEnd + 1]
@@ -235,15 +230,25 @@ export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
     break
   }
 
-  const processItems = items.slice(0, textRunStart)
+  // final = 仅 text run + 紧随 step-finish
   const finalItems = items.slice(textRunStart, textRunEnd + 1)
-  // text 之后若还有异常残留（极少），并入过程会打乱顺序；直接挂在最终段后
-  const trailing = items.slice(textRunEnd + 1)
+  // process = final 之前的一切 + final 之后非 step-finish 的残留
+  const before = items.slice(0, textRunStart)
+  const after = items.slice(textRunEnd + 1)
+  const afterProcess = after.filter(
+    item => !(item.type === 'single' && item.part.type === 'step-finish'),
+  )
+  const afterStepFinish = after.filter(
+    item => item.type === 'single' && item.part.type === 'step-finish',
+  )
+  const processItems = afterProcess.length > 0 ? [...before, ...afterProcess] : before
+  const mergedFinal = afterStepFinish.length > 0 ? [...finalItems, ...afterStepFinish] : finalItems
+
   return {
     processItems,
-    finalItems: trailing.length > 0 ? [...finalItems, ...trailing] : finalItems,
+    finalItems: mergedFinal,
     hasProcess: processItems.length > 0,
-    hasFinal: finalItems.length > 0,
+    hasFinal: mergedFinal.length > 0,
   }
 }
 
@@ -867,12 +872,35 @@ const AssistantMessageView = memo(function AssistantMessageView({
   }
 
   // 按 scope 切内容；过程折叠外壳只在 ChatArea 整轮层创建
-  const contentItems =
-    immersiveContentScope === 'process' || immersiveContentScope === 'inline'
-      ? immersiveSplit.processItems
-      : immersiveContentScope === 'final'
-        ? immersiveSplit.finalItems
-        : renderItems
+  // final：只允许最后一段 text + step-finish，绝不含 reasoning/tool（否则壳外正文会「带着思考」）
+  // process：去掉最终 text run（那些只在 final 位出现），避免壳内/壳外各一份正文
+  const contentItems = useMemo(() => {
+    const finalPartIds = new Set(
+      immersiveSplit.finalItems.flatMap(item =>
+        item.type === 'tool-group' ? item.parts.map(p => p.id) : [item.part.id],
+      ),
+    )
+
+    if (immersiveContentScope === 'inline') return immersiveSplit.processItems
+
+    if (immersiveContentScope === 'process') {
+      // 过程里保留思考/工具/中间说明；剔除已划入 final 的 text/step-finish
+      return immersiveSplit.processItems.filter(item => {
+        if (item.type === 'single' && finalPartIds.has(item.part.id)) return false
+        return true
+      })
+    }
+
+    if (immersiveContentScope === 'final') {
+      // 硬过滤：只 text + step-finish
+      return immersiveSplit.finalItems.filter(item => {
+        if (item.type !== 'single') return false
+        return item.part.type === 'text' || item.part.type === 'step-finish'
+      })
+    }
+
+    return renderItems
+  }, [immersiveContentScope, immersiveSplit.finalItems, immersiveSplit.processItems, renderItems])
   // process/inline：藏细节；final：藏内嵌（step 常在 process 的 tool-group 上），改挂正文后
   const forceHideStepFinish = hideProcessStepFinish || immersiveContentScope === 'final'
   const lastStepFinishIndexInContent = useMemo(
