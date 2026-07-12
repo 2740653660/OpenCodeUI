@@ -761,6 +761,14 @@ const AssistantMessageView = memo(function AssistantMessageView({
   const modelLabel = assistantInfo?.modelID || undefined
 
   const hasStepFinishPart = parts.some(part => part.type === 'step-finish')
+  // 本消息最后一个 step-finish（过程折叠 final 位用：process 里 forceHide 后提到正文后）
+  const ownLastStepFinish = useMemo((): StepFinishPart | undefined => {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i].type === 'step-finish') return parts[i] as StepFinishPart
+    }
+    return undefined
+  }, [parts])
+
   const showTurnDurationFooter =
     allowStepFinishOnMessage &&
     !isStreaming &&
@@ -775,18 +783,14 @@ const AssistantMessageView = memo(function AssistantMessageView({
     stepFinishDisplay.completedAt &&
     completed != null
 
-  const lastStepFinishIndex = useMemo(
-    () =>
-      renderItems.findLastIndex(it =>
-        it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
-      ),
-    [renderItems],
-  )
-
-  const renderItem = (item: RenderItem, idx: number, options?: { forceHideStepFinish?: boolean }) => {
-    const isLastStepFinish = idx === lastStepFinishIndex
-    // latestOnly 开：整轮最后一条 assistant 的最后一个 step 才显示
-    // latestOnly 关：本消息所有 step-finish 都显示（旧行为）
+  const renderItem = (
+    item: RenderItem,
+    idx: number,
+    options?: { forceHideStepFinish?: boolean; lastStepFinishIndex?: number },
+  ) => {
+    // lastStepFinishIndex 必须相对当前 contentItems，不能用完整 renderItems 下标
+    const isLastStepFinish = idx === (options?.lastStepFinishIndex ?? -1)
+    // latestOnly 开：本 content 序列最后一个 step 才显示
     // 过程块内：step-finish 细节默认隐藏，耗时只体现在「已处理 Xs」
     const showStepFinish =
       !options?.forceHideStepFinish &&
@@ -869,19 +873,50 @@ const AssistantMessageView = memo(function AssistantMessageView({
       : immersiveContentScope === 'final'
         ? immersiveSplit.finalItems
         : renderItems
-  const forceHideStepFinish = hideProcessStepFinish
+  // process/inline：藏细节；final：藏内嵌（step 常在 process 的 tool-group 上），改挂正文后
+  const forceHideStepFinish = hideProcessStepFinish || immersiveContentScope === 'final'
+  const lastStepFinishIndexInContent = useMemo(
+    () =>
+      contentItems.findLastIndex(it =>
+        it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
+      ),
+    [contentItems],
+  )
+  // final 位：本消息 step-finish 提到正文后、操作按钮前（与 latestOnly 门闩一致）
+  const showDetachedStepFinish =
+    immersiveContentScope === 'final' &&
+    allowStepFinishOnMessage &&
+    !isStreaming &&
+    ownLastStepFinish != null
 
   return (
     <div ref={wrapperRef} className="flex flex-col gap-2 w-full group">
       {/* 贴底时消息级生长动画；只一层，不嵌套 ToolGroup。已登场块靠 SmoothHeight 连续追高稳住 */}
       <SmoothHeight isActive={!!isStreaming && allowStreamingLayoutAnimation}>
         <div className="flex flex-col gap-2">
-          {contentItems.map((item, idx) => renderItem(item, idx, { forceHideStepFinish }))}
+          {contentItems.map((item, idx) =>
+            renderItem(item, idx, {
+              forceHideStepFinish,
+              lastStepFinishIndex: lastStepFinishIndexInContent,
+            }),
+          )}
         </div>
       </SmoothHeight>
 
       {/* Message-level error */}
       {messageError && <MessageErrorView error={messageError} stateKey={`message:${info.id}:error`} />}
+
+      {/* 过程折叠 final：正文后、分叉/复制前 */}
+      {showDetachedStepFinish && ownLastStepFinish && (
+        <StepFinishPartView
+          part={ownLastStepFinish}
+          duration={duration}
+          turnDuration={turnDuration}
+          agent={agent}
+          modelLabel={modelLabel}
+          completedAt={completed}
+        />
+      )}
 
       {(showTurnDurationFooter || showCompletedAtFooter) && (
         <div className="flex items-center gap-3 py-0.5 text-[length:var(--fs-xxs)] text-text-500">
