@@ -8,7 +8,7 @@
  * - exit code 内联在输出末尾
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MaximizeIcon, MinimizeIcon } from '../../../../components/Icons'
 import { useFullscreen } from '../../../../contexts'
@@ -180,12 +180,12 @@ function TerminalSurface({
     isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   }, [])
 
-  useEffect(() => {
-    if (!isActive) return
+  // 流式输出贴底；结束时 exit code / error 不是 output chunk，也要再贴一次，否则状态码露在可视区外
+  useLayoutEffect(() => {
     const el = scrollRef.current
     if (!el || !isAtBottomRef.current) return
     el.scrollTop = el.scrollHeight
-  }, [isActive, outputKey])
+  }, [isActive, outputKey, isDone, exitCode, hasError, error, exitCodeLabel])
 
   return (
     <div
