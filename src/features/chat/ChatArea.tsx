@@ -54,6 +54,7 @@ import {
   type ChatPage,
   type StableChatPage,
 } from './chatPageModel'
+import { isScrollAnchorLocked } from '../../utils/scrollUtils'
 
 const LOAD_MORE_ROOT_MARGIN = '240px 0px 0px 0px'
 const LOAD_MORE_ANCHOR_CAPTURE_PX = 480
@@ -838,7 +839,14 @@ export const ChatArea = memo(
           const current = previous[pageKey] ?? null
           if (current !== null && Math.abs(current - nextHeight) < 1) return previous
           const root = scrollRef.current
-          if (root && !isAtBottomRef.current && current !== null && Math.abs(current - nextHeight) >= 1) {
+          // steps/过程折叠正在锁 header 时，页高锚点让路，避免两个补偿互相抢 scrollTop
+          if (
+            root &&
+            !isAtBottomRef.current &&
+            !isScrollAnchorLocked() &&
+            current !== null &&
+            Math.abs(current - nextHeight) >= 1
+          ) {
             pendingLayoutAnchorRef.current = captureLoadMoreAnchor(root)
           }
           const next = { ...previous, [pageKey]: nextHeight }

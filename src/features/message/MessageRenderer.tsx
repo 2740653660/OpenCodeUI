@@ -40,6 +40,7 @@ import type {
 } from '../../types/message'
 import { isToolPart, isVisibleReasoningPart, isVisibleTextPart } from '../../types/message'
 import { formatDuration, formatCompletedAt, formatDetailedDateTime } from '../../utils/formatUtils'
+import { lockScrollAroundAnchor } from '../../utils/scrollUtils'
 import { useUiDisclosureState } from '../../utils/uiDisclosureState'
 
 /** 过程折叠：整轮过程收成「已处理 Xs」折叠块（动画与 tool steps 一致） */
@@ -57,11 +58,30 @@ export function ImmersiveProcessBlock({
   const { t } = useTranslation('message')
   const [expanded, setExpanded] = useUiDisclosureState(stateKey, isActive)
   const shouldRenderBody = useDelayedRender(expanded)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLButtonElement>(null)
+  const unlockScrollRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     // 流式过程中强制展开；结束后自动收敛（尊重用户手动操作）
     setExpanded(isActive, { touched: false, respectUser: true })
   }, [isActive, setExpanded])
+
+  useEffect(() => {
+    return () => {
+      unlockScrollRef.current?.()
+      unlockScrollRef.current = null
+    }
+  }, [])
+
+  const toggleExpanded = useCallback(() => {
+    unlockScrollRef.current?.()
+    // 先锁 header 视口位置，再切换；内容仍 grid-rows 向下长
+    unlockScrollRef.current = lockScrollAroundAnchor(headerRef.current, {
+      observe: rootRef.current,
+    })
+    setExpanded(!expanded)
+  }, [expanded, setExpanded])
 
   const durationLabel = formatDuration(durationMs != null && durationMs > 0 ? durationMs : 0)
   // 处理中也计时：处理中 12s / 已处理 12s
@@ -70,10 +90,11 @@ export function ImmersiveProcessBlock({
     : t('processedFor', { duration: durationLabel })
 
   return (
-    <div className="flex flex-col">
+    <div ref={rootRef} className="flex flex-col">
       <button
+        ref={headerRef}
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={toggleExpanded}
         className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
       >
         <span className={isActive ? 'reasoning-shimmer-text' : 'text-text-400'}>{label}</span>
@@ -893,6 +914,9 @@ const ToolGroup = memo(function ToolGroup({
   const groupStateKey = `message:${parts[0]?.messageID || 'unknown'}:tool-group:${parts[0]?.id || 'empty'}`
   const [expanded, setExpanded] = useUiDisclosureState(groupStateKey, shouldStartExpanded)
   const hasAutoExpandedReadableRef = useRef(shouldStartExpanded && immersiveMode && hasReadableTools)
+  const stepsRootRef = useRef<HTMLDivElement>(null)
+  const stepsHeaderRef = useRef<HTMLButtonElement>(null)
+  const unlockScrollRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!descriptiveToolSteps) return
@@ -923,6 +947,22 @@ const ToolGroup = memo(function ToolGroup({
     setExpanded,
   ])
 
+  useEffect(() => {
+    return () => {
+      unlockScrollRef.current?.()
+      unlockScrollRef.current = null
+    }
+  }, [])
+
+  const toggleStepsExpanded = useCallback(() => {
+    unlockScrollRef.current?.()
+    // steps header 为锚点：内容向下生长，header 视口位置不变
+    unlockScrollRef.current = lockScrollAroundAnchor(stepsHeaderRef.current, {
+      observe: stepsRootRef.current,
+    })
+    setExpanded(!expanded)
+  }, [expanded, setExpanded])
+
   const effectiveExpanded = expanded || hasPendingInteraction
   const shouldRenderBody = useDelayedRender(effectiveExpanded)
 
@@ -937,12 +977,13 @@ const ToolGroup = memo(function ToolGroup({
   // streaming→idle / 1→N 工具切换时不 remount，expanded 状态不丢失
   return (
     <SmoothHeight isActive={!!isStreaming}>
-      <div className="flex flex-col">
+      <div ref={stepsRootRef} className="flex flex-col">
         {showStepsHeader &&
           (descriptiveToolSteps ? (
             <button
+              ref={stepsHeaderRef}
               type="button"
-              onClick={() => setExpanded(!expanded)}
+              onClick={toggleStepsExpanded}
               className="flex w-full items-baseline rounded-md py-1 text-left hover:bg-bg-200/30 transition-colors"
             >
               <span className="text-[length:var(--fs-sm)] leading-5">
@@ -972,7 +1013,9 @@ const ToolGroup = memo(function ToolGroup({
             </button>
           ) : (
             <button
-              onClick={() => setExpanded(!expanded)}
+              ref={stepsHeaderRef}
+              type="button"
+              onClick={toggleStepsExpanded}
               className="flex items-center gap-1.5 py-1.5 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
             >
               <span className="inline-flex w-[14px] items-center justify-center shrink-0">
