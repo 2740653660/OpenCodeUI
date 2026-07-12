@@ -837,7 +837,10 @@ export const ChatArea = memo(
         if (nextHeight <= 0) return
         setMeasuredPageHeights(previous => {
           const current = previous[pageKey] ?? null
-          if (current !== null && Math.abs(current - nextHeight) < 1) return previous
+          // 与测量侧阈值对齐，避免动画中途 1px 抖动触发整树更新
+          if (current !== null && Math.abs(current - nextHeight) < PAGE_HEIGHT_MEASURE_MIN_DELTA_PX) {
+            return previous
+          }
           const root = scrollRef.current
           // steps/过程折叠正在锁 header 时，页高锚点让路，避免两个补偿互相抢 scrollTop
           if (
@@ -845,7 +848,7 @@ export const ChatArea = memo(
             !isAtBottomRef.current &&
             !isScrollAnchorLocked() &&
             current !== null &&
-            Math.abs(current - nextHeight) >= 1
+            Math.abs(current - nextHeight) >= PAGE_HEIGHT_MEASURE_MIN_DELTA_PX
           ) {
             pendingLayoutAnchorRef.current = captureLoadMoreAnchor(root)
           }
@@ -922,7 +925,7 @@ export const ChatArea = memo(
           <div
             ref={setScrollContainerRef}
             data-chat-scroll-root="true"
-            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col-reverse"
+            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col-reverse [overflow-anchor:none]"
           >
             <div className="flex-1" />
 
@@ -1056,30 +1059,59 @@ export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlock
   return pageMessageDerivedValuesEqual(previous, next)
 }
 
+/** 展开/流式时高度连续变，过密测量会拖着 ChatArea setState 发颤 */
+const PAGE_HEIGHT_MEASURE_MIN_DELTA_PX = 4
+
 function usePageHeightMeasurement(
   pageKey: string,
   onMeasuredHeightChange: (pageKey: string, nextHeight: number) => void,
 ) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const lastReportedHeightRef = useRef(0)
+  const measureRafRef = useRef<number | null>(null)
 
-  const measure = useCallback(() => {
+  const flushMeasure = useCallback(() => {
+    measureRafRef.current = null
     const element = wrapperRef.current
     if (!element) return
-    onMeasuredHeightChange(pageKey, element.offsetHeight)
+    const nextHeight = element.offsetHeight
+    if (nextHeight <= 0) return
+    const last = lastReportedHeightRef.current
+    // 首次或变化够大才上报，避免 grid-rows 动画每帧刷 setState
+    if (last > 0 && Math.abs(nextHeight - last) < PAGE_HEIGHT_MEASURE_MIN_DELTA_PX) return
+    lastReportedHeightRef.current = nextHeight
+    onMeasuredHeightChange(pageKey, nextHeight)
   }, [onMeasuredHeightChange, pageKey])
 
+  const scheduleMeasure = useCallback(() => {
+    if (measureRafRef.current !== null) return
+    measureRafRef.current = requestAnimationFrame(flushMeasure)
+  }, [flushMeasure])
+
   useLayoutEffect(() => {
-    measure()
-  }, [measure])
+    // 布局变化后立刻量一次（不节流阈值，保证虚拟化高度不过期）
+    const element = wrapperRef.current
+    if (!element) return
+    const nextHeight = element.offsetHeight
+    if (nextHeight <= 0) return
+    lastReportedHeightRef.current = nextHeight
+    onMeasuredHeightChange(pageKey, nextHeight)
+  }, [onMeasuredHeightChange, pageKey])
 
   useEffect(() => {
     const element = wrapperRef.current
     if (!element || typeof ResizeObserver === 'undefined') return
 
-    const observer = new ResizeObserver(measure)
+    const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(element)
-    return () => observer.disconnect()
-  }, [measure])
+    return () => {
+      observer.disconnect()
+      if (measureRafRef.current !== null) {
+        cancelAnimationFrame(measureRafRef.current)
+        measureRafRef.current = null
+      }
+    }
+  }, [scheduleMeasure])
 
   return wrapperRef
 }
@@ -1101,46 +1133,6 @@ const PageBlock = memo(function PageBlock({
 }: PageBlockProps) {
   const wrapperRef = usePageHeightMeasurement(page.key, onMeasuredHeightChange)
   const { processCollapseEnabled } = useTheme()
-  // 过程折叠：仅进行中的回合才跑前端实时计时，历史已完成回合不挂 interval
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  const pageNeedsLiveTimer = useMemo(() => {
-    if (!processCollapseEnabled) return false
-    // 任一条 assistant 仍在 streaming / 工具 running|pending
-    if (
-      page.rows.some(row =>
-        row.messages.some(
-          m =>
-            m.isStreaming ||
-            m.parts.some(
-              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
-            ),
-        ),
-      )
-    ) {
-      return true
-    }
-    // 用户已发送：尚无 assistant，或最后一条 assistant 还没 completed（多步 agent 间隙）
-    for (let i = 0; i < page.rows.length; i++) {
-      const row = page.rows[i]
-      if (row.messages[0]?.info.role !== 'user') continue
-      let lastAssistant: Message | null = null
-      for (let j = i + 1; j < page.rows.length; j++) {
-        const next = page.rows[j]
-        if (next.messages[0]?.info.role === 'user') break
-        const msgs = next.messages
-        if (msgs.length > 0) lastAssistant = msgs[msgs.length - 1]
-      }
-      if (!lastAssistant) return true
-      if (lastAssistant.info.time.completed == null) return true
-    }
-    return false
-  }, [page.rows, processCollapseEnabled])
-  useEffect(() => {
-    if (!pageNeedsLiveTimer) return
-    setNowMs(Date.now())
-    const id = window.setInterval(() => setNowMs(Date.now()), 250)
-    return () => window.clearInterval(id)
-  }, [pageNeedsLiveTimer])
 
   const renderMessage = (
     message: Message,
@@ -1277,11 +1269,9 @@ const PageBlock = memo(function PageBlock({
             userStart = assistantMessages[0].info.time.created
           }
 
-          const turnDurationMs = (() => {
-            if (userStart == null) return 0
-            // 进行中：始终前端实时（禁止被中间步骤的 turnDurationMap 冻住）
-            if (turnIsActive) return Math.max(0, nowMs - userStart)
-            // 整轮结束：后端校正
+          // 整轮结束后的校正时长；进行中由 ImmersiveProcessHeader 用 startedAt 本地走表
+          const settledDurationMs = (() => {
+            if (turnIsActive || userStart == null) return undefined
             for (const m of [...assistantMessages].reverse()) {
               const mapped = turnDurationMap.get(m.info.id)
               if (mapped != null && mapped > 0) return mapped
@@ -1337,7 +1327,8 @@ const PageBlock = memo(function PageBlock({
                       ) : (
                         <ImmersiveProcessBlock
                           stateKey={processStateKey}
-                          durationMs={turnDurationMs}
+                          startedAt={userStart}
+                          durationMs={settledDurationMs}
                           isActive={turnIsActive}
                         >
                           {processBody}

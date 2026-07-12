@@ -8,6 +8,7 @@ import { useNow } from '../../../hooks/useNow'
 import { serverStore } from '../../../store/serverStore'
 import { useTheme } from '../../../hooks/useTheme'
 import { formatToolName, formatDuration } from '../../../utils/formatUtils'
+import { lockScrollAroundAnchor } from '../../../utils/scrollUtils'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
 import {
   useInlineToolRequests,
@@ -57,7 +58,8 @@ export const ToolPartView = memo(function ToolPartView({
 
   const isActive = state.status === 'running' || state.status === 'pending'
   const isError = state.status === 'error'
-  const now = useNow(250, isActive)
+  // 1s 足够显示时长；250ms 会让运行中工具整行高频重渲，加重流式发颤
+  const now = useNow(1000, isActive)
   const startTime = state.time?.start
   const calibratedNow = isActive ? serverStore.getActiveCalibratedNow() : undefined
   const endTime = state.time?.end ?? (isActive ? (calibratedNow ?? now) : undefined)
@@ -116,52 +118,67 @@ export const ToolPartView = memo(function ToolPartView({
   const permissionContentHidden =
     compactInlinePermission && !isEditWritePermission && !isTaskTool && !!permissionRequest
   const isReadable = isReadableTool(toolName)
-  const shouldStartExpanded =
-    isActive ||
-    hasPendingInteraction ||
-    permissionResolved ||
-    (immersiveMode && descriptive && isStreaming && isReadable)
+  // 登场只出 header 一行：默认收起 body，避免挂载时 grid-rows + 消息 SmoothHeight 叠两层长高。
+  // 仅交互态（权限/提问）首帧需要展开；可读工具在 effect 里最多自动展开一次。
+  const shouldStartExpanded = hasPendingInteraction || permissionResolved
 
   const [expanded, setExpanded] = useUiDisclosureState(`message:${part.messageID}:tool:${part.id}`, shouldStartExpanded)
-  const hasAutoExpandedReadableRef = useRef(shouldStartExpanded && immersiveMode && descriptive && isReadable)
+  const hasAutoExpandedReadableRef = useRef(false)
   const [isChildFullscreen, setIsChildFullscreen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLButtonElement>(null)
+  const unlockScrollRef = useRef<(() => void) | null>(null)
+  // 交互/全屏强制展开，不经过「自动开合」逻辑
   const effectiveExpanded = expanded || hasPendingInteraction || permissionResolved || isChildFullscreen
   const shouldRenderBody = useDelayedRender(effectiveExpanded)
 
   useEffect(() => {
-    let frameId: number | null = null
-
-    if (isActive || hasPendingInteraction || permissionResolved) {
-      if (immersiveMode && descriptive && isReadable) {
-        hasAutoExpandedReadableRef.current = true
-      }
-      frameId = requestAnimationFrame(() => {
-        setExpanded(true, { touched: false, respectUser: true })
-      })
-    } else if (immersiveMode && descriptive && !isReadable) {
-      frameId = requestAnimationFrame(() => {
-        setExpanded(false, { touched: false, respectUser: true })
-      })
-    } else if (immersiveMode && descriptive && isStreaming && isReadable && !hasAutoExpandedReadableRef.current) {
-      hasAutoExpandedReadableRef.current = true
-      frameId = requestAnimationFrame(() => {
-        setExpanded(true, { touched: false, respectUser: true })
-      })
+    // 权限/提问：需要看到内容
+    if (hasPendingInteraction || permissionResolved) {
+      if (expanded) return
+      setExpanded(true, { touched: false, respectUser: true })
+      return
     }
 
-    return () => {
-      if (frameId !== null) cancelAnimationFrame(frameId)
+    // 沉浸 + 描述型：可读工具（bash/write 等）自动展开一次，便于跟输出
+    if (immersiveMode && descriptive && isReadable && (isActive || isStreaming) && !hasAutoExpandedReadableRef.current) {
+      hasAutoExpandedReadableRef.current = true
+      if (!expanded) setExpanded(true, { touched: false, respectUser: true })
+      return
+    }
+
+    // 不可读工具：只在结束后收敛，running 时绝不自动收起（避免登场先开后关）
+    if (immersiveMode && descriptive && !isReadable && !isActive && toolDone) {
+      if (expanded) setExpanded(false, { touched: false, respectUser: true })
     }
   }, [
-    isActive,
     hasPendingInteraction,
     permissionResolved,
     immersiveMode,
     descriptive,
-    isStreaming,
     isReadable,
+    isActive,
+    isStreaming,
+    toolDone,
+    expanded,
     setExpanded,
   ])
+
+  useEffect(() => {
+    return () => {
+      unlockScrollRef.current?.()
+      unlockScrollRef.current = null
+    }
+  }, [])
+
+  const toggleExpanded = useCallback(() => {
+    unlockScrollRef.current?.()
+    // 点 header 时钉住视口位置，内容 grid-rows 向下长（与 steps / 已处理一致）
+    unlockScrollRef.current = lockScrollAroundAnchor(headerRef.current, {
+      observe: rootRef.current,
+    })
+    setExpanded(!expanded)
+  }, [expanded, setExpanded])
 
   // Shared icon element
   const toolIcon = (
@@ -222,11 +239,12 @@ export const ToolPartView = memo(function ToolPartView({
     const diffStats = toolData.diffStats || computeDiffStatsFromData(toolData)
 
     return (
-      <div className="group py-0.5">
+      <div ref={rootRef} className="group py-0.5">
         <button
+          ref={headerRef}
           type="button"
           className="flex w-full items-center gap-3 rounded-md px-0 py-1 text-left hover:bg-bg-200/30 transition-colors group/header"
-          onClick={() => setExpanded(!expanded)}
+          onClick={toggleExpanded}
         >
           <div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
             <span
@@ -286,16 +304,17 @@ export const ToolPartView = memo(function ToolPartView({
   // Grid: [14px icon] [gap 6px] [content] — mirrors ReasoningPartView alignment
   if (compact) {
     return (
-      <div className="group relative grid grid-cols-[14px_minmax(0,1fr)] gap-x-1.5 items-start py-1">
+      <div ref={rootRef} className="group relative grid grid-cols-[14px_minmax(0,1fr)] gap-x-1.5 items-start py-1">
         {/* Icon column — fixed, outside of interactive area */}
         <span className="inline-flex h-9 w-[14px] items-center justify-center shrink-0">{toolIcon}</span>
 
         {/* Content column */}
         <div className="min-w-0">
           <button
+            ref={headerRef}
             type="button"
             className="flex items-center gap-2 w-full h-9 text-left pl-2 pr-0 hover:bg-bg-200/40 rounded-sm transition-colors group/header"
-            onClick={() => setExpanded(!expanded)}
+            onClick={toggleExpanded}
           >
             <div className="flex items-baseline gap-2 overflow-hidden flex-1 min-w-0">
               <span
@@ -366,7 +385,7 @@ export const ToolPartView = memo(function ToolPartView({
 
   // ── Timeline layout (multi-tool groups) ──
   return (
-    <div className="group relative flex min-w-0">
+    <div ref={rootRef} className="group relative flex min-w-0">
       {/* Timeline Column */}
       <div className="w-8 shrink-0 relative">
         {/* Top connector — 留 4px gap 到 icon */}
@@ -383,9 +402,10 @@ export const ToolPartView = memo(function ToolPartView({
       <div className="flex-1 min-w-0">
         {/* Header - h-9 和 timeline 图标行等高 */}
         <button
+          ref={headerRef}
           type="button"
           className="flex items-center gap-2.5 w-full h-9 text-left pl-2 pr-0 hover:bg-bg-200/40 rounded-sm transition-colors group/header"
-          onClick={() => setExpanded(!expanded)}
+          onClick={toggleExpanded}
         >
           <div className="flex items-baseline gap-2 overflow-hidden flex-1 min-w-0">
             <span

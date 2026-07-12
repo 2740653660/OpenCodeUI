@@ -7,6 +7,7 @@ import { CopyButton, SmoothHeight } from '../../components/ui'
 import { MarkdownRenderer } from '../../components/MarkdownRenderer'
 import { useDelayedRender } from '../../hooks'
 import { useInputCapabilities } from '../../hooks/useInputCapabilities'
+import { useNow } from '../../hooks/useNow'
 import { useTheme } from '../../hooks/useTheme'
 import {
   useInlineToolRequests,
@@ -43,19 +44,70 @@ import { formatDuration, formatCompletedAt, formatDetailedDateTime } from '../..
 import { lockScrollAroundAnchor } from '../../utils/scrollUtils'
 import { useUiDisclosureState } from '../../utils/uiDisclosureState'
 
+/**
+ * 过程折叠 header：进行中自己走表，避免 PageBlock 级 setInterval 拖着整页重渲。
+ * 只有这一行会因计时更新；children 不跟时钟走。
+ */
+const ImmersiveProcessHeader = memo(function ImmersiveProcessHeader({
+  isActive,
+  startedAt,
+  durationMs,
+  expanded,
+  onToggle,
+  headerRef,
+}: {
+  isActive: boolean
+  startedAt?: number
+  durationMs?: number
+  expanded: boolean
+  onToggle: () => void
+  headerRef: React.RefObject<HTMLButtonElement | null>
+}) {
+  const { t } = useTranslation('message')
+  // 1s 足够（formatDuration 在 <60s 为 0.1s 精度，但整页稳定优先于 0.1s 跳动）
+  const now = useNow(1000, isActive && startedAt != null)
+  const displayMs =
+    isActive && startedAt != null
+      ? Math.max(0, now - startedAt)
+      : durationMs != null && durationMs > 0
+        ? durationMs
+        : 0
+  const durationLabel = formatDuration(displayMs)
+  const label = isActive
+    ? t('processingWithDuration', { duration: durationLabel })
+    : t('processedFor', { duration: durationLabel })
+
+  return (
+    <button
+      ref={headerRef}
+      type="button"
+      onClick={onToggle}
+      className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
+    >
+      <span className={isActive ? 'reasoning-shimmer-text' : 'text-text-400'}>{label}</span>
+      <span className="inline-flex items-center justify-center text-text-500">
+        {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+      </span>
+    </button>
+  )
+})
+
 /** 过程折叠：整轮过程收成「已处理 Xs」折叠块（动画与 tool steps 一致） */
 export function ImmersiveProcessBlock({
   children,
   durationMs,
+  startedAt,
   isActive,
   stateKey,
 }: {
   children: ReactNode
+  /** 整轮结束后的校正时长；进行中可省略 */
   durationMs?: number
+  /** 用户发送时间；进行中 header 用它本地走表 */
+  startedAt?: number
   isActive: boolean
   stateKey: string
 }) {
-  const { t } = useTranslation('message')
   const [expanded, setExpanded] = useUiDisclosureState(stateKey, isActive)
   const shouldRenderBody = useDelayedRender(expanded)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -83,25 +135,16 @@ export function ImmersiveProcessBlock({
     setExpanded(!expanded)
   }, [expanded, setExpanded])
 
-  const durationLabel = formatDuration(durationMs != null && durationMs > 0 ? durationMs : 0)
-  // 处理中也计时：处理中 12s / 已处理 12s
-  const label = isActive
-    ? t('processingWithDuration', { duration: durationLabel })
-    : t('processedFor', { duration: durationLabel })
-
   return (
     <div ref={rootRef} className="flex flex-col">
-      <button
-        ref={headerRef}
-        type="button"
-        onClick={toggleExpanded}
-        className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
-      >
-        <span className={isActive ? 'reasoning-shimmer-text' : 'text-text-400'}>{label}</span>
-        <span className="inline-flex items-center justify-center text-text-500">
-          {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-        </span>
-      </button>
+      <ImmersiveProcessHeader
+        isActive={isActive}
+        startedAt={startedAt}
+        durationMs={durationMs}
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        headerRef={headerRef}
+      />
       <div
         className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
           expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
@@ -214,6 +257,7 @@ export function messageHasImmersiveFinal(message: Message): boolean {
 
 interface MessageRendererProps {
   message: Message
+  /** 贴底跟随时开启消息级高度生长补间；看历史时关闭，避免把视口顶走 */
   allowStreamingLayoutAnimation?: boolean
   /** 回合总时长（毫秒），仅在回合最后一条 assistant 消息上有值 */
   turnDuration?: number
@@ -802,7 +846,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
 
   return (
     <div ref={wrapperRef} className="flex flex-col gap-2 w-full group">
-      {/* 只在贴底跟随时保留高度补间；用户看历史时关闭，避免消息生长把视口顶走 */}
+      {/* 贴底时消息级生长动画；只一层，不嵌套 ToolGroup。已登场块靠 SmoothHeight 连续追高稳住 */}
       <SmoothHeight isActive={!!isStreaming && allowStreamingLayoutAnimation}>
         <div className="flex flex-col gap-2">
           {contentItems.map((item, idx) => renderItem(item, idx, { forceHideStepFinish }))}
@@ -903,47 +947,38 @@ const ToolGroup = memo(function ToolGroup({
 
   // 沉浸模式下：判断工具组是否包含需要用户阅读的工具
   const hasReadableTools = immersiveMode && parts.some(p => isReadableTool(p.tool))
+  // 有活跃工具/交互时展开 steps 列表；descriptive 默认展开以便看到工具行登场
   const shouldStartExpanded =
-    !descriptiveToolSteps ||
-    hasActiveTools ||
-    hasPendingInteraction ||
-    (immersiveMode && !!isStreaming && hasReadableTools)
+    !descriptiveToolSteps || hasActiveTools || hasPendingInteraction || !!isStreaming
 
-  // descriptive 模式默认收起，运行时展开，完成后保持展开
-  // 沉浸模式下：没有可读工具则完成后自动收起
+  // descriptive：运行时展开看工具行；结束后可收。沉浸且无可读工具时结束后收敛。
   const groupStateKey = `message:${parts[0]?.messageID || 'unknown'}:tool-group:${parts[0]?.id || 'empty'}`
   const [expanded, setExpanded] = useUiDisclosureState(groupStateKey, shouldStartExpanded)
-  const hasAutoExpandedReadableRef = useRef(shouldStartExpanded && immersiveMode && hasReadableTools)
   const stepsRootRef = useRef<HTMLDivElement>(null)
   const stepsHeaderRef = useRef<HTMLButtonElement>(null)
   const unlockScrollRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!descriptiveToolSteps) return
-    // 沉浸模式下没有可读工具：始终收起，不展开
-    if (immersiveMode && !hasReadableTools) {
+
+    // 活跃 / 交互 / 仍在流：保持展开，让新工具以 header 行登场
+    if (hasActiveTools || hasPendingInteraction || isStreaming) {
+      if (!expanded) setExpanded(true, { touched: false, respectUser: true })
+      return
+    }
+
+    // 整组结束后：沉浸且无可读工具 → 收敛；否则保持用户/当前状态
+    if (immersiveMode && !hasReadableTools && expanded) {
       setExpanded(false, { touched: false, respectUser: true })
-      return
-    }
-    if (hasActiveTools || hasPendingInteraction) {
-      if (immersiveMode && hasReadableTools) {
-        hasAutoExpandedReadableRef.current = true
-      }
-      setExpanded(true, { touched: false, respectUser: true })
-      return
-    }
-    // 某些可读工具（如 todo）可能首帧已完成，错过 running 态；流仍在继续时也自动展开一次
-    if (immersiveMode && isStreaming && hasReadableTools && !hasAutoExpandedReadableRef.current) {
-      hasAutoExpandedReadableRef.current = true
-      setExpanded(true, { touched: false, respectUser: true })
     }
   }, [
     descriptiveToolSteps,
     hasActiveTools,
     hasPendingInteraction,
+    isStreaming,
     immersiveMode,
     hasReadableTools,
-    isStreaming,
+    expanded,
     setExpanded,
   ])
 
@@ -966,116 +1001,114 @@ const ToolGroup = memo(function ToolGroup({
   const effectiveExpanded = expanded || hasPendingInteraction
   const shouldRenderBody = useDelayedRender(effectiveExpanded)
 
-  // compact: 单工具时用紧凑布局（图标内联，无 timeline 连接线）
-  // 不区分 streaming 状态 — 单工具始终 compact，第二个工具到来时再自然过渡到 timeline
-  const isSingleCompact = totalCount === 1 && !descriptiveToolSteps
+  // compact: 仅非流式的单工具用紧凑布局；流式中始终 timeline，避免 1→N 换骨架跳动
+  const isSingleCompact = totalCount === 1 && !descriptiveToolSteps && !isStreaming
   // steps header: 多工具始终显示；描述型 steps 模式下，单工具也显示
   // 过程折叠只包一层「已处理」，内部 steps 描述照常保留
   const showStepsHeader = totalCount > 1 || descriptiveToolSteps
 
   // 统一容器结构 — ToolPartView 始终在同一 React 树位置，
   // streaming→idle / 1→N 工具切换时不 remount，expanded 状态不丢失
+  // 工具行高度跟文档流 + 消息级 SmoothHeight；组本身不再嵌套 SmoothHeight
   return (
-    <SmoothHeight isActive={!!isStreaming}>
-      <div ref={stepsRootRef} className="flex flex-col">
-        {showStepsHeader &&
-          (descriptiveToolSteps ? (
-            <button
-              ref={stepsHeaderRef}
-              type="button"
-              onClick={toggleStepsExpanded}
-              className="flex w-full items-baseline rounded-md py-1 text-left hover:bg-bg-200/30 transition-colors"
-            >
-              <span className="text-[length:var(--fs-sm)] leading-5">
-                {stepsSummary?.map((seg, i) => (
-                  <span
-                    key={i}
-                    className={
-                      seg.type === 'error'
-                        ? 'text-danger-100'
-                        : seg.type === 'active'
-                          ? 'reasoning-shimmer-text'
-                          : 'text-text-300'
-                    }
-                  >
-                    {seg.text}
-                  </span>
-                ))}
+    <div ref={stepsRootRef} className="flex flex-col">
+      {showStepsHeader &&
+        (descriptiveToolSteps ? (
+          <button
+            ref={stepsHeaderRef}
+            type="button"
+            onClick={toggleStepsExpanded}
+            className="flex w-full items-baseline rounded-md py-1 text-left hover:bg-bg-200/30 transition-colors"
+          >
+            <span className="text-[length:var(--fs-sm)] leading-5">
+              {stepsSummary?.map((seg, i) => (
+                <span
+                  key={i}
+                  className={
+                    seg.type === 'error'
+                      ? 'text-danger-100'
+                      : seg.type === 'active'
+                        ? 'reasoning-shimmer-text'
+                        : 'text-text-300'
+                  }
+                >
+                  {seg.text}
+                </span>
+              ))}
+            </span>
+            {totalDiffStats && !hasActiveTools && (
+              <span className="ml-1.5 inline-flex items-center gap-1 text-[length:var(--fs-xxs)] font-mono font-medium tabular-nums">
+                {totalDiffStats.additions > 0 && (
+                  <span className="text-success-100">+{totalDiffStats.additions}</span>
+                )}
+                {totalDiffStats.deletions > 0 && <span className="text-danger-100">-{totalDiffStats.deletions}</span>}
               </span>
-              {totalDiffStats && !hasActiveTools && (
-                <span className="ml-1.5 inline-flex items-center gap-1 text-[length:var(--fs-xxs)] font-mono font-medium tabular-nums">
-                  {totalDiffStats.additions > 0 && (
-                    <span className="text-success-100">+{totalDiffStats.additions}</span>
-                  )}
-                  {totalDiffStats.deletions > 0 && <span className="text-danger-100">-{totalDiffStats.deletions}</span>}
+            )}
+          </button>
+        ) : (
+          <button
+            ref={stepsHeaderRef}
+            type="button"
+            onClick={toggleStepsExpanded}
+            className="flex items-center gap-1.5 py-1.5 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
+          >
+            <span className="inline-flex w-[14px] items-center justify-center shrink-0">
+              {effectiveExpanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
+            </span>
+            <span className="inline-flex items-baseline gap-2 whitespace-nowrap">
+              <span className="text-[length:var(--fs-md)] font-medium leading-tight">
+                {isAllDone
+                  ? t('stepsCount', { done: totalCount, total: totalCount })
+                  : t('stepsCount', { done: doneCount, total: totalCount })}
+              </span>
+              {!effectiveExpanded && stepFinish && (
+                <span className="text-[length:var(--fs-sm)] text-text-500 font-mono opacity-70">
+                  {formatTokens(stepFinish.tokens, t)}
                 </span>
               )}
-            </button>
-          ) : (
-            <button
-              ref={stepsHeaderRef}
-              type="button"
-              onClick={toggleStepsExpanded}
-              className="flex items-center gap-1.5 py-1.5 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
-            >
-              <span className="inline-flex w-[14px] items-center justify-center shrink-0">
-                {effectiveExpanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
-              </span>
-              <span className="inline-flex items-baseline gap-2 whitespace-nowrap">
-                <span className="text-[length:var(--fs-md)] font-medium leading-tight">
-                  {isAllDone
-                    ? t('stepsCount', { done: totalCount, total: totalCount })
-                    : t('stepsCount', { done: doneCount, total: totalCount })}
-                </span>
-                {!effectiveExpanded && stepFinish && (
-                  <span className="text-[length:var(--fs-sm)] text-text-500 font-mono opacity-70">
-                    {formatTokens(stepFinish.tokens, t)}
-                  </span>
-                )}
-              </span>
-            </button>
-          ))}
+            </span>
+          </button>
+        ))}
 
+      <div
+        className={
+          showStepsHeader
+            ? `grid transition-[grid-template-rows] duration-300 ease-in-out ${effectiveExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`
+            : ''
+        }
+      >
         <div
-          className={
-            showStepsHeader
-              ? `grid transition-[grid-template-rows] duration-300 ease-in-out ${effectiveExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`
-              : ''
-          }
+          className={showStepsHeader ? 'flex flex-col min-h-0 min-w-0 overflow-hidden' : 'flex flex-col'}
+          style={showStepsHeader ? { clipPath: 'inset(0 -100% 0 -100%)' } : undefined}
         >
-          <div
-            className={showStepsHeader ? 'flex flex-col min-h-0 min-w-0 overflow-hidden' : 'flex flex-col'}
-            style={showStepsHeader ? { clipPath: 'inset(0 -100% 0 -100%)' } : undefined}
-          >
-            {(!showStepsHeader || shouldRenderBody) &&
-              parts.map((part, idx) => (
-                <ToolPartView
-                  key={part.id}
-                  part={part}
-                  isFirst={idx === 0}
-                  isLast={idx === parts.length - 1}
-                  compact={isSingleCompact}
-                  descriptive={descriptiveToolSteps}
-                  isStreaming={isStreaming}
-                />
-              ))}
-          </div>
+          {(!showStepsHeader || shouldRenderBody) &&
+            parts.map((part, idx) => (
+              <ToolPartView
+                key={part.id}
+                part={part}
+                isFirst={idx === 0}
+                isLast={idx === parts.length - 1}
+                compact={isSingleCompact}
+                descriptive={descriptiveToolSteps}
+                isStreaming={isStreaming}
+              />
+            ))}
         </div>
-
-        {stepFinish && (
-          <div className="mt-2">
-            <StepFinishPartView
-              part={stepFinish}
-              duration={duration}
-              turnDuration={turnDuration}
-              agent={agent}
-              modelLabel={modelLabel}
-              completedAt={completedAt}
-            />
-          </div>
-        )}
       </div>
-    </SmoothHeight>
+
+      {stepFinish && (
+        <div className="mt-2">
+          <StepFinishPartView
+            part={stepFinish}
+            duration={duration}
+            turnDuration={turnDuration}
+            agent={agent}
+            modelLabel={modelLabel}
+            completedAt={completedAt}
+          />
+        </div>
+      )}
+    </div>
   )
 })
 
