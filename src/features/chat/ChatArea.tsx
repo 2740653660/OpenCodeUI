@@ -1248,19 +1248,20 @@ const PageBlock = memo(function PageBlock({
           // 必须用全局最新 user，不能用页内最后一回合（分页时页尾不是会话最新）
           const isLatestUserTurn =
             latestUserMessageId != null && turnUserMessageIds.includes(latestUserMessageId)
-          // 工具仍在跑：任何回合都算处理中（异步追加新消息也不能提前标完成）
-          const hasLiveToolWork = assistantMessages.some(m =>
-            m.parts.some(
+          // 本回合是否仍有真实活工作（已 completed 的 assistant 不算活）
+          const hasLiveAssistantWork = assistantMessages.some(m => {
+            if (m.info.time.completed != null) return false
+            if (m.isStreaming) return true
+            return m.parts.some(
               p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
-            ),
-          )
-          const hasStreamingAssistant = assistantMessages.some(m => m.isStreaming)
-          // 最新回合：工具跑着 / 流式中 / session 等首包或多步间隙
-          // 已被新 user 顶替的旧回合：只看工具是否还在跑；工具全结束后立刻「已处理」
-          // （旧回合 isStreaming 可能残留，不能单独把旧回合钉死在「处理中」）
+            )
+          })
+          // 最新回合：活工作，或「还没有任何 assistant」时靠 session 表示等首包
+          // 旧回合：只跟本回合真实活工作
+          // 禁止：有 assistant 却只靠 sessionIsStreaming 撑空壳（会假「处理中」+ 真内容裸渲）
           const turnIsActive = isLatestUserTurn
-            ? hasLiveToolWork || hasStreamingAssistant || sessionIsStreaming
-            : hasLiveToolWork
+            ? hasLiveAssistantWork || (assistantMessages.length === 0 && sessionIsStreaming)
+            : hasLiveAssistantWork
 
           // 用户发送时间：优先 map；否则取本回合 user.created
           let userStart: number | undefined
@@ -1284,11 +1285,7 @@ const PageBlock = memo(function PageBlock({
             userStart = assistantMessages[0].info.time.created
           }
 
-          // 整轮结束后的校正时长（真实 steps 墙钟）：
-          // 1) turnDurationMap：user.created → 最后 assistant.completed
-          // 2) 兜底：assistant.completed / 工具 state.time.end 的最晚值 − userStart
-          // 3) 再没有：header 冻住最后一次 live 读数
-          // 进行中仍由 ImmersiveProcessHeader 用 startedAt 本地走表。
+          // 整轮结束后的校正时长（真实 steps 墙钟）
           const settledDurationMs = (() => {
             if (turnIsActive || userStart == null) return undefined
             for (const m of [...assistantMessages].reverse()) {
@@ -1309,17 +1306,20 @@ const PageBlock = memo(function PageBlock({
             return undefined
           })()
 
-          // 有过程、或用户已发还在等/跑 → 显示过程块
-          const showProcessBlock = processMessages.length > 0 || turnIsActive
-          // 「处理中/已处理」外壳只挂在带 user 的那一页。
-          // 跨页续段（页首孤立 assistant）无论 continuesFromPrevious 是否标上，都不再套第二层，
-          // 否则多步 agent / 分页边界会叠出两个计时 header（刷新后更稳现）。
+          // 空壳只允许「等首包」；已有过程内容才包 ImmersiveProcessBlock
+          // 绝不能 turnIsActive && processMessages=[] && 下面还有 final 裸渲
+          const waitingForFirstAssistant = turnIsActive && assistantMessages.length === 0
+          const showProcessBlock = processMessages.length > 0 || waitingForFirstAssistant
+          // 外壳只挂在带 user 的回合；跨页孤立 assistant 不套第二层
           const wrapProcessShell = turn.userRows.length > 0
-          // 稳定 stateKey：优先 user 发送时间，避免流结束后 key 变化导致重挂两个块
+          // key 全程稳定：用 user id / userStart，不随 assistant 到达改 key
           const processStateKey =
-            userStart != null
-              ? `turn-process:start:${userStart}`
-              : `turn-process:key:${turn.key}`
+            turnUserMessageIds[0] != null
+              ? `turn-process:user:${turnUserMessageIds[0]}`
+              : userStart != null
+                ? `turn-process:start:${userStart}`
+                : `turn-process:key:${turn.key}`
+          const processShellKey = `shell:${processStateKey}`
 
           const processBody = processMessages.map(message =>
             renderMessage(message, message.info.id === finalAssistantId ? 'process' : 'inline'),
@@ -1336,15 +1336,15 @@ const PageBlock = memo(function PageBlock({
               )}
               {(showProcessBlock || finalMessages.length > 0 || turn.assistantRows.length > 0) && (
                 renderRowShell(
-                  turn.assistantRows[0] ??
-                    ({
-                      key: `${turn.key}:process`,
-                      messages: [],
-                      messageIds: [],
-                      estimatedHeight: 40,
-                      continuesFromPrevious: false,
-                      continuesToNext: turnIndex < turns.length - 1,
-                    } as ChatPage['rows'][number]),
+                  {
+                    key: processShellKey,
+                    messages: turn.assistantRows[0]?.messages ?? [],
+                    messageIds: turn.assistantRows[0]?.messageIds ?? [],
+                    estimatedHeight: turn.assistantRows[0]?.estimatedHeight ?? 40,
+                    continuesFromPrevious: turn.assistantRows[0]?.continuesFromPrevious ?? false,
+                    continuesToNext:
+                      turn.assistantRows[0]?.continuesToNext ?? turnIndex < turns.length - 1,
+                  } as ChatPage['rows'][number],
                   false,
                   <>
                     {showProcessBlock &&
@@ -1358,7 +1358,6 @@ const PageBlock = memo(function PageBlock({
                           {processBody}
                         </ImmersiveProcessBlock>
                       ) : (
-                        // 续页 / 无 user 片段：只渲染过程内容，外壳在有 user 的那一页
                         <div className="flex flex-col gap-2">{processBody}</div>
                       ))}
                     {finalMessages.map(message =>

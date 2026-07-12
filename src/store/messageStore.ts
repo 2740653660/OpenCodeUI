@@ -483,10 +483,13 @@ class MessageStore {
   handleMessageUpdated(apiMsg: ApiMessage) {
     const state = this.ensureSession(apiMsg.sessionID)
     const existingIndex = state.messages.findIndex(m => m.info.id === apiMsg.id)
+    const info = toUIMessageInfo(apiMsg)
+    // assistant 有 completed 就一定不是流式；否则会残留 isStreaming=true，过程折叠旧回合永远「处理中」
+    const messageIsStreaming = info.role === 'assistant' && info.time.completed == null
 
     if (existingIndex >= 0) {
       const oldMessage = state.messages[existingIndex]
-      const newMessage = { ...oldMessage, info: toUIMessageInfo(apiMsg) }
+      const newMessage = { ...oldMessage, info, isStreaming: messageIsStreaming }
       state.messages = [
         ...state.messages.slice(0, existingIndex),
         newMessage,
@@ -494,15 +497,20 @@ class MessageStore {
       ]
     } else {
       const newMsg: Message = {
-        info: toUIMessageInfo(apiMsg),
+        info,
         parts: [],
-        isStreaming: apiMsg.role === 'assistant',
+        isStreaming: messageIsStreaming,
       }
       state.messages = [...state.messages, newMsg]
-      if (apiMsg.role === 'assistant') {
+      if (messageIsStreaming) {
         state.isStreaming = true
       }
     }
+
+    // 注意：不要在这里根据「当前没有 isStreaming 消息」清 session.isStreaming。
+    // 用户异步插话后：前一轮 completed 事件可能晚到，此时新一轮已 setStreaming(true) 但 assistant 还没到，
+    // 若此处清掉 session 流式，新回合等首包时「处理中」外壳会整块消失（刷新后才恢复）。
+    // session 级开关只由 setStreaming / handleSessionIdle / handleSessionError 管理。
 
     this.notify([apiMsg.sessionID])
   }

@@ -247,15 +247,29 @@ export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
   }
 }
 
+/**
+ * 流式未完成时不拆 final：中间 text 后面还可能跟 tool，若提前当最终回答，
+ * 过程壳会变空、真内容裸渲在壳外（假「处理中」+ 助手内容不在壳里）。
+ */
+export function messageStillStreamingProcess(message: Message): boolean {
+  if (message.info.role !== 'assistant') return false
+  return !!message.isStreaming || message.info.time.completed == null
+}
+
 /** 是否有可收进「已处理」过程块的内容（tool / reasoning 等，不含尾部最终 text） */
 export function messageHasImmersiveProcess(message: Message): boolean {
   if (message.info.role !== 'assistant') return false
-  return splitImmersiveRenderItems(groupPartsForRender(message.parts)).hasProcess
+  const items = groupPartsForRender(message.parts)
+  if (items.length === 0) return false
+  // 流式中：整段都算过程
+  if (messageStillStreamingProcess(message)) return true
+  return splitImmersiveRenderItems(items).hasProcess
 }
 
-/** 是否有应留在折叠块外的最终 text */
+/** 是否有应留在折叠块外的最终 text（仅消息已结束后才拆） */
 export function messageHasImmersiveFinal(message: Message): boolean {
   if (message.info.role !== 'assistant') return false
+  if (messageStillStreamingProcess(message)) return false
   return splitImmersiveRenderItems(groupPartsForRender(message.parts)).hasFinal
 }
 
@@ -667,8 +681,17 @@ const AssistantMessageView = memo(function AssistantMessageView({
   const renderItems = useMemo(() => groupPartsForRender(parts), [parts])
 
   // 最终可见回复之前的过程（tool/reasoning 等）与尾部 text 切分
+  // 流式中不拆 final，避免中间 text 被当成最终回答导致过程壳变空
   const immersiveSplit = useMemo(() => {
-    const split = splitImmersiveRenderItems(renderItems)
+    const stillStreaming = messageStillStreamingProcess(message)
+    const split = stillStreaming
+      ? {
+          processItems: renderItems,
+          finalItems: [] as RenderItem[],
+          hasProcess: renderItems.length > 0,
+          hasFinal: false,
+        }
+      : splitImmersiveRenderItems(renderItems)
 
     if (immersiveContentScope === 'process') {
       return {
@@ -679,6 +702,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
       }
     }
     if (immersiveContentScope === 'final') {
+      // 流式中 final 范围暂无内容（还没拆）
       return {
         processItems: [] as RenderItem[],
         finalItems: split.finalItems,
@@ -695,9 +719,8 @@ const AssistantMessageView = memo(function AssistantMessageView({
         hasFinal: false,
       }
     }
-    // all：本地是否折叠由 wrapProcessLocally 决定
     return split
-  }, [immersiveContentScope, renderItems])
+  }, [immersiveContentScope, message, renderItems])
 
   // 判断哪些 reasoning part 已经结束（后面出现了任何非基础设施 part）
   // 直接检查源 parts 数组，而非 renderItems，因为 renderItems 会过滤掉空 text，
