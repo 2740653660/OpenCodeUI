@@ -259,10 +259,10 @@ export function messageStillStreamingProcess(message: Message): boolean {
 /** 是否有可收进「已处理」过程块的内容（tool / reasoning 等，不含尾部最终 text） */
 export function messageHasImmersiveProcess(message: Message): boolean {
   if (message.info.role !== 'assistant') return false
+  // 流式/未完成：即使 parts 还空也算过程，避免先以 all 裸渲、再拆壳外内容
+  if (messageStillStreamingProcess(message)) return true
   const items = groupPartsForRender(message.parts)
   if (items.length === 0) return false
-  // 流式中：整段都算过程
-  if (messageStillStreamingProcess(message)) return true
   return splitImmersiveRenderItems(items).hasProcess
 }
 

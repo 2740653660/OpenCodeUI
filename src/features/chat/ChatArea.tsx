@@ -1234,15 +1234,6 @@ const PageBlock = memo(function PageBlock({
           const finalAssistant =
             assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null
           const finalAssistantId = finalAssistant?.info.id ?? null
-          const finalHasProcess = !!finalAssistant && messageHasImmersiveProcess(finalAssistant)
-          const finalHasAnswer = !!finalAssistant && messageHasImmersiveFinal(finalAssistant)
-
-          const processMessages = assistantMessages.filter(m => {
-            if (m.info.id !== finalAssistantId) return true
-            return finalHasProcess
-          })
-          const finalMessages =
-            finalAssistant && (finalHasAnswer || !finalHasProcess) ? [finalAssistant] : []
 
           const turnUserMessageIds = turn.userRows.flatMap(row => row.messages.map(m => m.info.id))
           // 必须用全局最新 user，不能用页内最后一回合（分页时页尾不是会话最新）
@@ -1257,13 +1248,26 @@ const PageBlock = memo(function PageBlock({
             )
           })
           // 最新回合：活工作 或 session 仍 busy（对齐官方 session_working）
-          // 多步 agent 间隙里 assistant 可能已 completed，但 session.status 仍 busy，
-          // 必须继续「处理中」，不能提前「已处理」再弹回。
-          // 旧回合：只跟本回合真实活工作（不把 session busy 套到前一轮）
-          // 空壳仍靠 showProcessBlock 限制：无 process 内容时不套 ImmersiveProcessBlock
+          // 旧回合：只跟本回合真实活工作
           const turnIsActive = isLatestUserTurn
             ? hasLiveAssistantWork || sessionIsStreaming
             : hasLiveAssistantWork
+
+          // 活跃回合：整段 assistant 强制进过程壳，禁止拆 final 裸渲在壳外
+          // （用户发送后空壳 → assistant 先到 parts 为空 → 若拆 all 会永久分家，刷新才复合）
+          const finalHasProcess = !!finalAssistant && messageHasImmersiveProcess(finalAssistant)
+          const finalHasAnswer = !!finalAssistant && messageHasImmersiveFinal(finalAssistant)
+          const processMessages = turnIsActive
+            ? assistantMessages
+            : assistantMessages.filter(m => {
+                if (m.info.id !== finalAssistantId) return true
+                return finalHasProcess
+              })
+          const finalMessages = turnIsActive
+            ? []
+            : finalAssistant && (finalHasAnswer || !finalHasProcess)
+              ? [finalAssistant]
+              : []
 
           // 用户发送时间：优先 map；否则取本回合 user.created
           let userStart: number | undefined
@@ -1308,13 +1312,12 @@ const PageBlock = memo(function PageBlock({
             return undefined
           })()
 
-          // 空壳只允许「等首包」；已有过程内容才包 ImmersiveProcessBlock
-          // 绝不能 turnIsActive && processMessages=[] && 下面还有 final 裸渲
+          // 等首包空壳 + 有过程内容都显示；活跃时 final 已强制清空，不会壳外裸渲
           const waitingForFirstAssistant = turnIsActive && assistantMessages.length === 0
           const showProcessBlock = processMessages.length > 0 || waitingForFirstAssistant
           // 外壳只挂在带 user 的回合；跨页孤立 assistant 不套第二层
           const wrapProcessShell = turn.userRows.length > 0
-          // key 全程稳定：用 user id / userStart，不随 assistant 到达改 key
+          // key 全程稳定：用 user id，不随 assistant 到达改 key（空壳与内容同一 React 节点）
           const processStateKey =
             turnUserMessageIds[0] != null
               ? `turn-process:user:${turnUserMessageIds[0]}`
@@ -1323,6 +1326,7 @@ const PageBlock = memo(function PageBlock({
                 : `turn-process:key:${turn.key}`
           const processShellKey = `shell:${processStateKey}`
 
+          // 活跃/有过程：最后一条 process，中间 assistant inline，都在壳内
           const processBody = processMessages.map(message =>
             renderMessage(message, message.info.id === finalAssistantId ? 'process' : 'inline'),
           )
