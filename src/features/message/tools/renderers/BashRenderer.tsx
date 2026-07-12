@@ -173,6 +173,8 @@ function TerminalSurface({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  // 仅本轮流式会话跟随：历史打开已完成工具不贴底（默认从顶部看命令）
+  const shouldFollowRef = useRef(false)
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
@@ -180,10 +182,13 @@ function TerminalSurface({
     isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   }, [])
 
-  // 流式输出贴底；结束时 exit code / error 不是 output chunk，也要再贴一次，否则状态码露在可视区外
+  // 流式中贴底；刚结束时 exit code/error 不是 output chunk，再贴一次。
+  // 不在「已完成工具重新展开/刷新打开」时贴底。
   useLayoutEffect(() => {
+    if (isActive) shouldFollowRef.current = true
+
     const el = scrollRef.current
-    if (!el || !isAtBottomRef.current) return
+    if (!el || !shouldFollowRef.current || !isAtBottomRef.current) return
     el.scrollTop = el.scrollHeight
   }, [isActive, outputKey, isDone, exitCode, hasError, error, exitCodeLabel])
 
