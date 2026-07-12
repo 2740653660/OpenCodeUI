@@ -65,7 +65,7 @@ export const ToolPartView = memo(function ToolPartView({
   const endTime = state.time?.end ?? (isActive ? (calibratedNow ?? now) : undefined)
   const rawDuration = startTime !== undefined && endTime !== undefined ? endTime - startTime : undefined
   const duration = rawDuration !== undefined && isActive ? Math.max(0, rawDuration) : rawDuration
-  const { inlineToolRequests, immersiveMode, compactInlinePermission } = useTheme()
+  const { inlineToolRequests, immersiveMode, compactInlinePermission, processCollapseEnabled } = useTheme()
 
   const { pendingPermissions, pendingQuestions, onPermissionReply, onQuestionReply, onQuestionReject, isReplying } =
     useInlineToolRequests()
@@ -140,6 +140,9 @@ export const ToolPartView = memo(function ToolPartView({
       return
     }
 
+    // 过程折叠：工具 body 默认不自动展开（steps 也收着），用户点开再看
+    if (processCollapseEnabled) return
+
     // 沉浸 + 描述型：可读工具（bash/write 等）自动展开一次，便于跟输出
     if (immersiveMode && descriptive && isReadable && (isActive || isStreaming) && !hasAutoExpandedReadableRef.current) {
       hasAutoExpandedReadableRef.current = true
@@ -154,6 +157,7 @@ export const ToolPartView = memo(function ToolPartView({
   }, [
     hasPendingInteraction,
     permissionResolved,
+    processCollapseEnabled,
     immersiveMode,
     descriptive,
     isReadable,

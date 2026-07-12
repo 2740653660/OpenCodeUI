@@ -937,7 +937,7 @@ const ToolGroup = memo(function ToolGroup({
   completedAt,
 }: ToolGroupProps) {
   const { t } = useTranslation('message')
-  const { descriptiveToolSteps, inlineToolRequests, immersiveMode } = useTheme()
+  const { descriptiveToolSteps, inlineToolRequests, immersiveMode, processCollapseEnabled } = useTheme()
   const { pendingPermissions, pendingQuestions } = useInlineToolRequests()
   const hasPendingInteraction =
     inlineToolRequests &&
@@ -974,11 +974,12 @@ const ToolGroup = memo(function ToolGroup({
 
   // 沉浸模式下：判断工具组是否包含需要用户阅读的工具
   const hasReadableTools = immersiveMode && parts.some(p => isReadableTool(p.tool))
-  // 有活跃工具/交互时展开 steps 列表；descriptive 默认展开以便看到工具行登场
-  const shouldStartExpanded =
-    !descriptiveToolSteps || hasActiveTools || hasPendingInteraction || !!isStreaming
+  // 过程折叠开启：steps 从一开始就收起，只显示摘要行（用户手动点开）
+  // 其它模式：活跃/流式/交互时展开
+  const shouldStartExpanded = processCollapseEnabled
+    ? !!hasPendingInteraction
+    : !descriptiveToolSteps || hasActiveTools || hasPendingInteraction || !!isStreaming
 
-  // descriptive：运行时展开看工具行；结束后可收。沉浸且无可读工具时结束后收敛。
   const groupStateKey = `message:${parts[0]?.messageID || 'unknown'}:tool-group:${parts[0]?.id || 'empty'}`
   const [expanded, setExpanded] = useUiDisclosureState(groupStateKey, shouldStartExpanded)
   const stepsRootRef = useRef<HTMLDivElement>(null)
@@ -988,8 +989,17 @@ const ToolGroup = memo(function ToolGroup({
   useEffect(() => {
     if (!descriptiveToolSteps) return
 
-    // 活跃 / 交互 / 仍在流：保持展开，让新工具以 header 行登场
-    if (hasActiveTools || hasPendingInteraction || isStreaming) {
+    // 权限/提问：必须展开让用户操作
+    if (hasPendingInteraction) {
+      if (!expanded) setExpanded(true, { touched: false, respectUser: true })
+      return
+    }
+
+    // 过程折叠：不自动展开 steps（从一开始就收着）
+    if (processCollapseEnabled) return
+
+    // 活跃 / 仍在流：保持展开，让新工具以 header 行登场
+    if (hasActiveTools || isStreaming) {
       if (!expanded) setExpanded(true, { touched: false, respectUser: true })
       return
     }
@@ -1000,6 +1010,7 @@ const ToolGroup = memo(function ToolGroup({
     }
   }, [
     descriptiveToolSteps,
+    processCollapseEnabled,
     hasActiveTools,
     hasPendingInteraction,
     isStreaming,
