@@ -15,7 +15,7 @@ export function formatDuration(ms: number): string {
   const normalizedMs = Math.max(0, Math.round(ms))
   if (normalizedMs < 1000) return `${normalizedMs}ms`
   const s = normalizedMs / 1000
-  if (s < 60) return `${s.toFixed(1)}s`
+  if (s < 60) return `${Math.round(s)}s`
 
   const totalSeconds = Math.round(s)
   const d = Math.floor(totalSeconds / (60 * 60 * 24))
