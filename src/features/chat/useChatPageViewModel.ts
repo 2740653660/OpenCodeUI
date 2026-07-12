@@ -9,6 +9,7 @@ import {
 import {
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
+  buildTurnUserStartMap,
   reconcileStableChatPages,
   type MessageGroupRow,
   type StableChatPage,
@@ -22,6 +23,7 @@ export interface ChatPageViewModel {
   outlineOwnerByMessageId: Map<string, string>
   forkTargetIdMap: Map<string, string | undefined>
   turnDurationMap: Map<string, number>
+  turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
 }
 
@@ -194,6 +196,7 @@ export function buildChatPageViewModel(messages: Message[], previous?: ChatPageV
   const forkTargetIdMap = reuseMap(previous?.forkTargetIdMap, buildForkTargetIdMap(visibleMessageEntries))
   const outlineModel = getStableOutlineModel(visibleMessages)
   const turnDurationMap = reuseMap(previous?.turnDurationMap, buildTurnDurationMap(messages, visibleMessages))
+  const turnUserStartMap = reuseMap(previous?.turnUserStartMap, buildTurnUserStartMap(messages, visibleMessages))
   const turnLatestAssistantIds = reuseSet(
     previous?.turnLatestAssistantIds,
     buildTurnLatestAssistantIdSet(visibleMessages),
@@ -207,6 +210,7 @@ export function buildChatPageViewModel(messages: Message[], previous?: ChatPageV
     outlineOwnerByMessageId: outlineModel.ownerByMessageId,
     forkTargetIdMap,
     turnDurationMap,
+    turnUserStartMap,
     turnLatestAssistantIds,
   }
 }

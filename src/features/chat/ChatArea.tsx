@@ -24,7 +24,12 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { animate } from 'motion/mini'
-import { MessageRenderer } from '../message'
+import {
+  ImmersiveProcessBlock,
+  MessageRenderer,
+  messageHasImmersiveFinal,
+  messageHasImmersiveProcess,
+} from '../message'
 import { MessageErrorView } from '../message/parts'
 import { messageStore } from '../../store'
 import { useTheme } from '../../hooks/useTheme'
@@ -41,6 +46,7 @@ import {
   computeAnchorRestoreScrollDelta,
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
+  buildTurnUserStartMap,
   computeExpandedPageRange,
   expandSelectionWithPageKeys,
   PAGE_ADJACENT_OVERSCAN,
@@ -124,6 +130,8 @@ interface ChatAreaProps {
   visibleMessages?: Message[]
   forkTargetIdMap?: Map<string, string | undefined>
   turnDurationMap?: Map<string, number>
+  /** 每个可见 assistant 所属回合的用户发送时间；过程折叠前端实时计时起点 */
+  turnUserStartMap?: Map<string, number>
   /** 每个用户回合最后一条可见 assistant 的 id；用于仅在最新 step 显示完成信息 */
   turnLatestAssistantIds?: Set<string>
   sessionId?: string | null
@@ -162,6 +170,7 @@ export const ChatArea = memo(
         visibleMessages: visibleMessagesProp,
         forkTargetIdMap: forkTargetIdMapProp,
         turnDurationMap: turnDurationMapProp,
+        turnUserStartMap: turnUserStartMapProp,
         turnLatestAssistantIds: turnLatestAssistantIdsProp,
         sessionId,
         isStreaming: _isStreaming = false,
@@ -249,6 +258,10 @@ export const ChatArea = memo(
       const localTurnDurationMap = useMemo(
         () => turnDurationMapProp ?? buildTurnDurationMap(messages, visibleMessages),
         [messages, turnDurationMapProp, visibleMessages],
+      )
+      const localTurnUserStartMap = useMemo(
+        () => turnUserStartMapProp ?? buildTurnUserStartMap(messages, visibleMessages),
+        [messages, turnUserStartMapProp, visibleMessages],
       )
       const localTurnLatestAssistantIds = useMemo(
         () => turnLatestAssistantIdsProp ?? buildTurnLatestAssistantIdSet(visibleMessages),
@@ -953,6 +966,7 @@ export const ChatArea = memo(
                   onFork={onFork}
                   canUndo={canUndo}
                   turnDurationMap={localTurnDurationMap}
+                  turnUserStartMap={localTurnUserStartMap}
                   turnLatestAssistantIds={localTurnLatestAssistantIds}
                   forkTargetIdMap={localForkTargetIdMap}
                   allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
@@ -990,6 +1004,7 @@ interface PageBlockProps {
   onFork?: (message: Message, forkMessageId?: string) => void | Promise<void>
   canUndo?: boolean
   turnDurationMap: Map<string, number>
+  turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
   forkTargetIdMap: Map<string, string | undefined>
   allowStreamingLayoutAnimation: boolean
@@ -999,6 +1014,7 @@ interface PageBlockProps {
 interface PageDerivedValueProps {
   page: ChatPage
   turnDurationMap: Map<string, number>
+  turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
   forkTargetIdMap: Map<string, string | undefined>
 }
@@ -1007,6 +1023,7 @@ function pageMessageDerivedValuesEqual(previous: PageDerivedValueProps, next: Pa
   return previous.page.messageIds.every(messageId => {
     return (
       previous.turnDurationMap.get(messageId) === next.turnDurationMap.get(messageId) &&
+      previous.turnUserStartMap.get(messageId) === next.turnUserStartMap.get(messageId) &&
       previous.turnLatestAssistantIds.has(messageId) === next.turnLatestAssistantIds.has(messageId) &&
       previous.forkTargetIdMap.get(messageId) === next.forkTargetIdMap.get(messageId)
     )
@@ -1068,58 +1085,254 @@ const PageBlock = memo(function PageBlock({
   onFork,
   canUndo,
   turnDurationMap,
+  turnUserStartMap,
   turnLatestAssistantIds,
   forkTargetIdMap,
   allowStreamingLayoutAnimation,
   onMeasuredHeightChange,
 }: PageBlockProps) {
   const wrapperRef = usePageHeightMeasurement(page.key, onMeasuredHeightChange)
+  const { processCollapseEnabled } = useTheme()
+  // 过程折叠：仅进行中的回合才跑前端实时计时，历史已完成回合不挂 interval
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const pageNeedsLiveTimer = useMemo(() => {
+    if (!processCollapseEnabled) return false
+    // 任一条 assistant 仍在 streaming / 工具 running
+    if (
+      page.rows.some(row =>
+        row.messages.some(
+          m =>
+            m.isStreaming ||
+            m.parts.some(
+              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
+            ),
+        ),
+      )
+    ) {
+      return true
+    }
+    // 用户已发送、本页尚无对应 assistant（等首包）
+    for (let i = 0; i < page.rows.length; i++) {
+      const row = page.rows[i]
+      if (row.messages[0]?.info.role !== 'user') continue
+      const next = page.rows[i + 1]
+      if (!next || next.messages[0]?.info.role === 'user') return true
+    }
+    return false
+  }, [page.rows, processCollapseEnabled])
+  useEffect(() => {
+    if (!pageNeedsLiveTimer) return
+    setNowMs(Date.now())
+    const id = window.setInterval(() => setNowMs(Date.now()), 250)
+    return () => window.clearInterval(id)
+  }, [pageNeedsLiveTimer])
+
+  const renderMessage = (
+    message: Message,
+    immersiveContentScope?: 'all' | 'process' | 'final' | 'inline',
+  ) => (
+    <RenderedMessageItem
+      key={`${message.info.id}:${immersiveContentScope ?? 'all'}`}
+      messageId={message.info.id}
+      anchorSourceId={forkTargetIdMap.get(message.info.id) ?? message.info.id}
+      registerMessage={registerMessage}
+    >
+      <MessageRenderer
+        message={message}
+        allowStreamingLayoutAnimation={message.isStreaming ? allowStreamingLayoutAnimation : false}
+        turnDuration={turnDurationMap.get(message.info.id)}
+        isTurnLatestAssistant={
+          message.info.role === 'assistant' ? turnLatestAssistantIds.has(message.info.id) : undefined
+        }
+        immersiveContentScope={immersiveContentScope}
+        onUndo={message.info.role === 'user' ? onUndo : undefined}
+        onFork={onFork}
+        forkMessageId={forkTargetIdMap.get(message.info.id)}
+        canUndo={message.info.role === 'user' ? canUndo : undefined}
+        onEnsureParts={NOOP}
+      />
+    </RenderedMessageItem>
+  )
+
+  const renderRowShell = (
+    row: ChatPage['rows'][number],
+    isUser: boolean,
+    content: ReactNode,
+  ) => {
+    const verticalPaddingClass = row.continuesFromPrevious
+      ? row.continuesToNext
+        ? 'pt-2 pb-0'
+        : 'pt-2 pb-3'
+      : row.continuesToNext
+        ? 'pt-3 pb-0'
+        : 'py-3'
+    return (
+      <div
+        key={row.key}
+        className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} ${verticalPaddingClass} transition-[max-width] duration-300 ease-in-out`}
+      >
+        <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+          <div className={`message-renderer-shell min-w-0 group ${!isUser ? 'w-full' : ''} flex flex-col gap-2`}>
+            {content}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 过程折叠：按 user → assistants 回合渲染；用户一发送就挂「处理中」计时
+  if (processCollapseEnabled) {
+    type TurnSeg = {
+      key: string
+      userRows: ChatPage['rows']
+      assistantRows: ChatPage['rows']
+    }
+    const turns: TurnSeg[] = []
+    let current: TurnSeg | null = null
+    for (const row of page.rows) {
+      const isUser = row.messages[0]?.info.role === 'user'
+      if (isUser) {
+        if (current) turns.push(current)
+        current = { key: row.key, userRows: [row], assistantRows: [] }
+      } else if (current) {
+        current.assistantRows.push(row)
+      } else {
+        // 页首孤立 assistant（跨页切分）：当作无 user 的回合
+        current = { key: row.key, userRows: [], assistantRows: [row] }
+      }
+    }
+    if (current) turns.push(current)
+
+    return (
+      <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
+        {turns.map((turn, turnIndex) => {
+          const assistantMessages = turn.assistantRows.flatMap(r => r.messages)
+          const finalAssistant =
+            assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null
+          const finalAssistantId = finalAssistant?.info.id ?? null
+          const finalHasProcess = !!finalAssistant && messageHasImmersiveProcess(finalAssistant)
+          const finalHasAnswer = !!finalAssistant && messageHasImmersiveFinal(finalAssistant)
+
+          const processMessages = assistantMessages.filter(m => {
+            if (m.info.id !== finalAssistantId) return true
+            return finalHasProcess
+          })
+          const finalMessages =
+            finalAssistant && (finalHasAnswer || !finalHasProcess) ? [finalAssistant] : []
+
+          const waitingForFirstAssistant =
+            turn.userRows.length > 0 && assistantMessages.length === 0
+          const hasLiveAssistantWork = assistantMessages.some(
+            m =>
+              m.isStreaming ||
+              m.parts.some(
+                p =>
+                  p.type === 'tool' &&
+                  (p.state.status === 'running' || p.state.status === 'pending'),
+              ),
+          )
+          // 仅「等首包 / 仍在跑」算 active；已完成历史回合不持续计时
+          const turnIsActive = waitingForFirstAssistant || hasLiveAssistantWork
+
+          // 用户发送时间：优先 map；否则取本回合 user.created
+          let userStart: number | undefined
+          for (const m of assistantMessages) {
+            const start = turnUserStartMap.get(m.info.id)
+            if (start != null) {
+              userStart = start
+              break
+            }
+          }
+          if (userStart == null) {
+            for (const row of turn.userRows) {
+              const created = row.messages[0]?.info.time.created
+              if (created != null) {
+                userStart = created
+                break
+              }
+            }
+          }
+          if (userStart == null && assistantMessages[0]) {
+            userStart = assistantMessages[0].info.time.created
+          }
+
+          const turnDurationMs = (() => {
+            // 1) 后端校正：回合完成耗时
+            for (const m of [...assistantMessages].reverse()) {
+              const mapped = turnDurationMap.get(m.info.id)
+              if (mapped != null && mapped > 0) return mapped
+            }
+            if (userStart == null) return 0
+            // 2) 进行中：前端实时
+            if (turnIsActive) return Math.max(0, nowMs - userStart)
+            // 3) 已结束但 map 未到：用最后一条 completed
+            const last = assistantMessages[assistantMessages.length - 1]
+            const end = last?.info.time.completed
+            if (end != null && end > userStart) return end - userStart
+            // 4) 兜底：不再用 now 继续涨
+            return 0
+          })()
+
+          // 有过程、或用户已发还在等/跑 → 显示过程块
+          const showProcessBlock = processMessages.length > 0 || turnIsActive
+
+          return (
+            <div key={turn.key} className="contents">
+              {turn.userRows.map(row =>
+                renderRowShell(
+                  row,
+                  true,
+                  row.messages.map(message => renderMessage(message)),
+                ),
+              )}
+              {(showProcessBlock || finalMessages.length > 0 || turn.assistantRows.length > 0) && (
+                renderRowShell(
+                  turn.assistantRows[0] ??
+                    ({
+                      key: `${turn.key}:process`,
+                      messages: [],
+                      messageIds: [],
+                      estimatedHeight: 40,
+                      continuesFromPrevious: false,
+                      continuesToNext: turnIndex < turns.length - 1,
+                    } as ChatPage['rows'][number]),
+                  false,
+                  <>
+                    {showProcessBlock && (
+                      <ImmersiveProcessBlock
+                        stateKey={`turn:${turn.key}:immersive-process`}
+                        durationMs={turnDurationMs}
+                        isActive={turnIsActive}
+                      >
+                        {processMessages.map(message =>
+                          renderMessage(
+                            message,
+                            message.info.id === finalAssistantId ? 'process' : 'inline',
+                          ),
+                        )}
+                      </ImmersiveProcessBlock>
+                    )}
+                    {finalMessages.map(message =>
+                      renderMessage(message, finalHasProcess ? 'final' : 'all'),
+                    )}
+                  </>,
+                )
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
       {page.rows.map(row => {
         const isUser = row.messages[0].info.role === 'user'
-        const verticalPaddingClass = row.continuesFromPrevious
-          ? row.continuesToNext
-            ? 'pt-2 pb-0'
-            : 'pt-2 pb-3'
-          : row.continuesToNext
-            ? 'pt-3 pb-0'
-            : 'py-3'
-        return (
-          <div
-            key={row.key}
-            className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} ${verticalPaddingClass} transition-[max-width] duration-300 ease-in-out`}
-          >
-            <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              <div className={`message-renderer-shell min-w-0 group ${!isUser ? 'w-full' : ''} flex flex-col gap-2`}>
-                {row.messages.map(message => (
-                  <RenderedMessageItem
-                    key={message.info.id}
-                    messageId={message.info.id}
-                    anchorSourceId={forkTargetIdMap.get(message.info.id) ?? message.info.id}
-                    registerMessage={registerMessage}
-                  >
-                    <MessageRenderer
-                      message={message}
-                      allowStreamingLayoutAnimation={message.isStreaming ? allowStreamingLayoutAnimation : false}
-                      turnDuration={turnDurationMap.get(message.info.id)}
-                      isTurnLatestAssistant={
-                        message.info.role === 'assistant'
-                          ? turnLatestAssistantIds.has(message.info.id)
-                          : undefined
-                      }
-                      onUndo={message.info.role === 'user' ? onUndo : undefined}
-                      onFork={onFork}
-                      forkMessageId={forkTargetIdMap.get(message.info.id)}
-                      canUndo={message.info.role === 'user' ? canUndo : undefined}
-                      onEnsureParts={NOOP}
-                    />
-                  </RenderedMessageItem>
-                ))}
-              </div>
-            </div>
-          </div>
+        return renderRowShell(
+          row,
+          isUser,
+          row.messages.map(message => renderMessage(message)),
         )
       })}
     </div>

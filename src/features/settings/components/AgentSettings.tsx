@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { autoApproveStore } from '../../../store'
 import type { AlwaysAllowMode } from '../../../store/autoApproveStore'
-import { themeStore, type ToolCardStyle } from '../../../store/themeStore'
+import { themeStore, type ProcessCollapseStyle, type ToolCardStyle } from '../../../store/themeStore'
 import { Toggle, SegmentedControl, SettingRow, SettingsSection } from './SettingsUI'
 
 export function AgentSettings() {
@@ -15,6 +15,8 @@ export function AgentSettings() {
   const [toolCardStyle, setToolCardStyle] = useState(themeStore.toolCardStyle)
   const [immersiveMode, setImmersiveMode] = useState(themeStore.immersiveMode)
   const [compactInlinePermission, setCompactInlinePermission] = useState(themeStore.compactInlinePermission)
+  const [processCollapseEnabled, setProcessCollapseEnabled] = useState(themeStore.processCollapseEnabled)
+  const [processCollapseStyle, setProcessCollapseStyle] = useState(themeStore.processCollapseStyle)
 
   const handleAlwaysAllowModeChange = (mode: AlwaysAllowMode) => {
     setAlwaysAllowMode(mode)
@@ -67,6 +69,13 @@ export function AgentSettings() {
     setCompactInlinePermission(next)
   }
 
+  const handleProcessCollapseToggle = () => {
+    const next = !processCollapseEnabled
+    setProcessCollapseEnabled(next)
+    themeStore.setProcessCollapseEnabled(next)
+    if (next) setDescriptiveToolSteps(true)
+  }
+
   return (
     <div>
       <SettingsSection title={t('agent.behavior')}>
@@ -112,6 +121,30 @@ export function AgentSettings() {
         >
           <Toggle enabled={immersiveMode} onChange={handleImmersiveModeToggle} />
         </SettingRow>
+
+        <SettingRow
+          label={t('chat.processCollapse')}
+          description={t('chat.processCollapseDesc')}
+          onClick={handleProcessCollapseToggle}
+        >
+          <Toggle enabled={processCollapseEnabled} onChange={handleProcessCollapseToggle} />
+        </SettingRow>
+
+        {processCollapseEnabled && (
+          <div>
+            <p className="text-[length:var(--fs-md)] text-text-100 mb-1.5">{t('chat.processCollapseStyle')}</p>
+            <p className="text-[length:var(--fs-sm)] text-text-400 mb-3">{t('chat.processCollapseStyleDesc')}</p>
+            <SegmentedControl
+              value={processCollapseStyle}
+              options={[{ value: 'processed', label: t('chat.processCollapseStyleProcessed') }]}
+              onChange={v => {
+                const style = v as ProcessCollapseStyle
+                setProcessCollapseStyle(style)
+                themeStore.setProcessCollapseStyle(style)
+              }}
+            />
+          </div>
+        )}
 
         <SettingRow
           label={t('chat.inlineToolRequests')}

@@ -7,6 +7,9 @@
   "forkFromHere": "从此处分叉",
   "forkingFromHere": "正在分叉...",
   "stepsCount": "{{done}}/{{total}} steps",
+  "processedFor": "已处理 {{duration}}",
+  "processing": "处理中...",
+  "processingWithDuration": "处理中 {{duration}}",
   "tokens": "token",
   "tokensK": "{{count}}k token",
   "defaultRenderer": {

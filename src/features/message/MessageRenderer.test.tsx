@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MessageRenderer } from './MessageRenderer'
-import type { Message } from '../../types/message'
+import { MessageRenderer, splitImmersiveRenderItems } from './MessageRenderer'
+import type { Message, Part, StepFinishPart, TextPart, ToolPart } from '../../types/message'
 
 let mockRenderUserMarkdown = false
 let mockCollapseUserMessages = false
@@ -25,6 +25,8 @@ vi.mock('../../hooks/useTheme', () => ({
     renderUserMarkdown: mockRenderUserMarkdown,
     stepFinishDisplay: { latestOnly: true, turnDuration: false, tokens: true, cache: true, cost: true, duration: true, agent: false, model: false, completedAt: false },
     actionsOnLatestAssistantOnly: true,
+    processCollapseEnabled: false,
+    processCollapseStyle: 'processed',
     descriptiveToolSteps: false,
     inlineToolRequests: false,
     immersiveMode: false,
@@ -200,5 +202,45 @@ describe('MessageRenderer assistant fork', () => {
     expect(screen.getByTestId('user-markdown').closest('.bg-bg-300')).toHaveClass('w-full', 'max-w-2xl')
     expect(screen.getByTestId('user-markdown').closest('.group')).toHaveClass('w-full')
     expect(screen.getByTestId('user-markdown').closest('[data-user-html-artifact]')).toBeInTheDocument()
+  })
+})
+
+describe('splitImmersiveRenderItems', () => {
+  it('keeps trailing final text outside process even when step-finish follows', () => {
+    const toolPart = {
+      id: 'tool-1',
+      type: 'tool',
+      tool: 'bash',
+      callID: 'c1',
+      state: { status: 'completed', input: {}, output: 'ok', title: 'bash', time: { start: 1, end: 2 } },
+    } as ToolPart
+    const textPart = {
+      id: 'text-1',
+      type: 'text',
+      text: '最终回答正文',
+    } as TextPart
+    const stepFinish = {
+      id: 'sf-1',
+      type: 'step-finish',
+      reason: 'stop',
+      cost: 0,
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+    } as StepFinishPart
+
+    // 模拟 groupPartsForRender 输出：tool-group + 尾部 text + 独立 step-finish
+    const items = [
+      { type: 'tool-group' as const, parts: [toolPart] },
+      { type: 'single' as const, part: textPart as Part },
+      { type: 'single' as const, part: stepFinish as Part },
+    ]
+
+    const split = splitImmersiveRenderItems(items)
+
+    expect(split.hasProcess).toBe(true)
+    expect(split.hasFinal).toBe(true)
+    expect(split.processItems).toHaveLength(1)
+    expect(split.processItems[0].type).toBe('tool-group')
+    expect(split.finalItems.some(it => it.type === 'single' && it.part.type === 'text')).toBe(true)
+    expect(split.finalItems.some(it => it.type === 'single' && it.part.type === 'step-finish')).toBe(true)
   })
 })

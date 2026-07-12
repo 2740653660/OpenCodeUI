@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
+import { memo, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { diffLines } from 'diff'
 import { animate } from 'motion/mini'
@@ -42,6 +42,155 @@ import { isToolPart, isVisibleReasoningPart, isVisibleTextPart } from '../../typ
 import { formatDuration, formatCompletedAt, formatDetailedDateTime } from '../../utils/formatUtils'
 import { useUiDisclosureState } from '../../utils/uiDisclosureState'
 
+/** 过程折叠：整轮过程收成「已处理 Xs」折叠块（跨多条 assistant） */
+export function ImmersiveProcessBlock({
+  children,
+  durationMs,
+  isActive,
+  stateKey,
+}: {
+  children: ReactNode
+  durationMs?: number
+  isActive: boolean
+  stateKey: string
+}) {
+  const { t } = useTranslation('message')
+  const [expanded, setExpanded] = useUiDisclosureState(stateKey, isActive)
+  const shouldRenderBody = useDelayedRender(expanded)
+
+  useEffect(() => {
+    // 流式过程中强制展开；结束后自动收敛（尊重用户手动操作）
+    setExpanded(isActive, { touched: false, respectUser: true })
+  }, [isActive, setExpanded])
+
+  const durationLabel = formatDuration(durationMs != null && durationMs > 0 ? durationMs : 0)
+  // 处理中也计时：处理中 12s / 已处理 12s
+  const label = isActive
+    ? t('processingWithDuration', { duration: durationLabel })
+    : t('processedFor', { duration: durationLabel })
+
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
+      >
+        <span className={isActive ? 'reasoning-shimmer-text' : 'text-text-400'}>{label}</span>
+        <span className="inline-flex items-center justify-center text-text-500">
+          {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+        </span>
+      </button>
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
+          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: 'inset(0 -100% 0 -100%)' }}>
+          {shouldRenderBody && <div className="flex flex-col gap-2 pt-1">{children}</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 消息内容范围：
+ * - all: 正常渲染；沉浸模式下本消息可自建过程折叠
+ * - process: 只渲染过程部分（进外层「已处理」块）
+ * - final: 只渲染尾部最终 text
+ * - inline: 完整渲染但不自建折叠（已在外层过程块内）
+ */
+export type ImmersiveContentScope = 'all' | 'process' | 'final' | 'inline'
+
+type ImmersiveSplit = {
+  processItems: RenderItem[]
+  finalItems: RenderItem[]
+  hasProcess: boolean
+  hasFinal: boolean
+}
+
+/**
+ * 把 render items 拆成「过程」和「最终回答」。
+ * 最终回答 = 消息中最后一段连续 text（允许后面跟独立 step-finish）。
+ * 之前从末尾扫描时若先碰到 step-finish 会误把整段当过程，这里会跳过尾部 chrome。
+ */
+export function splitImmersiveRenderItems(items: RenderItem[]): ImmersiveSplit {
+  if (items.length === 0) {
+    return { processItems: [], finalItems: [], hasProcess: false, hasFinal: false }
+  }
+
+  // 从后往前找最后一段可见 text（中间可跳过尾部 step-finish）
+  let lastTextIdx = -1
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.type === 'single' && item.part.type === 'text') {
+      lastTextIdx = i
+      break
+    }
+    if (item.type === 'single' && item.part.type === 'step-finish') {
+      continue
+    }
+    // 末尾是 tool/reasoning 等 → 后面没有最终 text
+    break
+  }
+
+  if (lastTextIdx < 0) {
+    // 整段都是过程
+    return {
+      processItems: items,
+      finalItems: [],
+      hasProcess: items.length > 0,
+      hasFinal: false,
+    }
+  }
+
+  // 向前扩展连续 text run
+  let textRunStart = lastTextIdx
+  while (textRunStart > 0) {
+    const prev = items[textRunStart - 1]
+    if (prev.type === 'single' && prev.part.type === 'text') {
+      textRunStart -= 1
+      continue
+    }
+    break
+  }
+
+  // 文本后的独立 step-finish 跟最终回答走（不进过程块）
+  let textRunEnd = lastTextIdx
+  while (textRunEnd + 1 < items.length) {
+    const next = items[textRunEnd + 1]
+    if (next.type === 'single' && next.part.type === 'step-finish') {
+      textRunEnd += 1
+      continue
+    }
+    break
+  }
+
+  const processItems = items.slice(0, textRunStart)
+  const finalItems = items.slice(textRunStart, textRunEnd + 1)
+  // text 之后若还有异常残留（极少），并入过程会打乱顺序；直接挂在最终段后
+  const trailing = items.slice(textRunEnd + 1)
+  return {
+    processItems,
+    finalItems: trailing.length > 0 ? [...finalItems, ...trailing] : finalItems,
+    hasProcess: processItems.length > 0,
+    hasFinal: finalItems.length > 0,
+  }
+}
+
+/** 是否有可收进「已处理」过程块的内容（tool / reasoning 等，不含尾部最终 text） */
+export function messageHasImmersiveProcess(message: Message): boolean {
+  if (message.info.role !== 'assistant') return false
+  return splitImmersiveRenderItems(groupPartsForRender(message.parts)).hasProcess
+}
+
+/** 是否有应留在折叠块外的最终 text */
+export function messageHasImmersiveFinal(message: Message): boolean {
+  if (message.info.role !== 'assistant') return false
+  return splitImmersiveRenderItems(groupPartsForRender(message.parts)).hasFinal
+}
+
 interface MessageRendererProps {
   message: Message
   allowStreamingLayoutAnimation?: boolean
@@ -53,6 +202,13 @@ interface MessageRendererProps {
    * 未传入时按 true 处理（单条消息场景）。
    */
   isTurnLatestAssistant?: boolean
+  /**
+   * 沉浸模式整轮折叠时的内容范围：
+   * - all: 正常渲染（外层不拆）
+   * - process: 只渲染过程（进外层「已处理」块）
+   * - final: 只渲染尾部最终 text + 操作按钮
+   */
+  immersiveContentScope?: ImmersiveContentScope
   onUndo?: (userMessageId: string) => void
   onFork?: (message: Message, forkMessageId?: string) => Promise<void> | void
   forkMessageId?: string
@@ -65,6 +221,7 @@ export const MessageRenderer = memo(function MessageRenderer({
   allowStreamingLayoutAnimation = true,
   turnDuration,
   isTurnLatestAssistant = true,
+  immersiveContentScope = 'all',
   onUndo,
   onFork,
   forkMessageId,
@@ -92,6 +249,7 @@ export const MessageRenderer = memo(function MessageRenderer({
       allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
       turnDuration={turnDuration}
       isTurnLatestAssistant={isTurnLatestAssistant}
+      immersiveContentScope={immersiveContentScope}
       onFork={onFork}
       forkMessageId={forkMessageId}
       onEnsureParts={onEnsureParts}
@@ -398,6 +556,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
   allowStreamingLayoutAnimation = true,
   turnDuration,
   isTurnLatestAssistant = true,
+  immersiveContentScope = 'all',
   onFork,
   forkMessageId,
   onEnsureParts,
@@ -406,18 +565,32 @@ const AssistantMessageView = memo(function AssistantMessageView({
   allowStreamingLayoutAnimation?: boolean
   turnDuration?: number
   isTurnLatestAssistant?: boolean
+  immersiveContentScope?: ImmersiveContentScope
   onFork?: (message: Message, forkMessageId?: string) => Promise<void> | void
   forkMessageId?: string
   onEnsureParts?: (messageId: string) => void
 }) {
   const { t } = useTranslation('message')
   const { parts, isStreaming, info } = message
-  const { stepFinishDisplay, completedAtFormat, actionsOnLatestAssistantOnly } = useTheme()
+  const {
+    stepFinishDisplay,
+    completedAtFormat,
+    actionsOnLatestAssistantOnly,
+    processCollapseEnabled,
+  } = useTheme()
   // 整轮最新 assistant 才允许显示 step 完成信息（latestOnly 时中间 assistant 全隐藏）
   const allowStepFinishOnMessage = !stepFinishDisplay.latestOnly || isTurnLatestAssistant
   // 分叉/复制：默认只在回合末尾助手消息显示，避免连续多条打断阅读
-  const showMessageActions = !actionsOnLatestAssistantOnly || isTurnLatestAssistant
+  const showMessageActions =
+    immersiveContentScope !== 'process' &&
+    immersiveContentScope !== 'inline' &&
+    (!actionsOnLatestAssistantOnly || isTurnLatestAssistant)
   const actionBarClass = useMessageActionBarClass()
+  // 外层已包整轮过程块时，本消息不再自建折叠；只按 scope 切分内容
+  const wrapProcessLocally = processCollapseEnabled && immersiveContentScope === 'all'
+  // 过程块内隐藏 step-finish 明细（耗时已体现在「已处理 Xs」）；steps 描述行仍保留
+  const hideProcessStepFinish =
+    immersiveContentScope === 'process' || immersiveContentScope === 'inline'
 
   const wrapperRef = useEntryGrowAnimation(info.time.created)
 
@@ -429,6 +602,39 @@ const AssistantMessageView = memo(function AssistantMessageView({
 
   // 收集连续的 tool parts 合并渲染
   const renderItems = useMemo(() => groupPartsForRender(parts), [parts])
+
+  // 最终可见回复之前的过程（tool/reasoning 等）与尾部 text 切分
+  const immersiveSplit = useMemo(() => {
+    const split = splitImmersiveRenderItems(renderItems)
+
+    if (immersiveContentScope === 'process') {
+      return {
+        processItems: split.processItems,
+        finalItems: [] as RenderItem[],
+        hasProcess: split.hasProcess,
+        hasFinal: false,
+      }
+    }
+    if (immersiveContentScope === 'final') {
+      return {
+        processItems: [] as RenderItem[],
+        finalItems: split.finalItems,
+        hasProcess: false,
+        hasFinal: split.hasFinal,
+      }
+    }
+    if (immersiveContentScope === 'inline') {
+      // 中间 assistant：整条都进外层过程块
+      return {
+        processItems: renderItems,
+        finalItems: [] as RenderItem[],
+        hasProcess: renderItems.length > 0,
+        hasFinal: false,
+      }
+    }
+    // all：本地是否折叠由 wrapProcessLocally 决定
+    return split
+  }, [immersiveContentScope, renderItems])
 
   // 判断哪些 reasoning part 已经结束（后面出现了任何非基础设施 part）
   // 直接检查源 parts 数组，而非 renderItems，因为 renderItems 会过滤掉空 text，
@@ -483,6 +689,105 @@ const AssistantMessageView = memo(function AssistantMessageView({
     stepFinishDisplay.completedAt &&
     completed != null
 
+  const lastStepFinishIndex = useMemo(
+    () =>
+      renderItems.findLastIndex(it =>
+        it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
+      ),
+    [renderItems],
+  )
+
+  // 过程块耗时：完成后用消息 duration 校正；进行中用 created→now 前端实时计时
+  // hooks 必须在任何 early return 之前
+  const processIsActive =
+    !!isStreaming ||
+    immersiveSplit.processItems.some(
+      item =>
+        item.type === 'tool-group' &&
+        item.parts.some(part => part.state.status === 'running' || part.state.status === 'pending'),
+    )
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!processIsActive) return
+    setNowMs(Date.now())
+    const id = window.setInterval(() => setNowMs(Date.now()), 250)
+    return () => window.clearInterval(id)
+  }, [processIsActive])
+
+  const processDurationMs = useMemo(() => {
+    // 后端校正：消息已完成
+    if (!processIsActive && duration != null && duration > 0) return duration
+    if (created) return Math.max(0, nowMs - created)
+    return duration
+  }, [created, duration, nowMs, processIsActive])
+
+  const showLocalProcessWrap = wrapProcessLocally && immersiveSplit.hasProcess
+
+  const renderItem = (item: RenderItem, idx: number, options?: { forceHideStepFinish?: boolean }) => {
+    const isLastStepFinish = idx === lastStepFinishIndex
+    // latestOnly 开：整轮最后一条 assistant 的最后一个 step 才显示
+    // latestOnly 关：本消息所有 step-finish 都显示（旧行为）
+    // 过程块内：step-finish 细节默认隐藏，耗时只体现在「已处理 Xs」
+    const showStepFinish =
+      !options?.forceHideStepFinish &&
+      allowStepFinishOnMessage &&
+      (!stepFinishDisplay.latestOnly || isLastStepFinish)
+    const showTiming = showStepFinish && isLastStepFinish
+
+    if (item.type === 'tool-group') {
+      return (
+        <ToolGroup
+          key={item.parts[0].id}
+          parts={item.parts}
+          stepFinish={showStepFinish ? item.stepFinish : undefined}
+          duration={showTiming ? duration : undefined}
+          turnDuration={showTiming ? turnDuration : undefined}
+          isStreaming={isStreaming}
+          agent={showStepFinish ? agent : undefined}
+          modelLabel={showStepFinish ? modelLabel : undefined}
+          completedAt={showTiming ? completed : undefined}
+        />
+      )
+    }
+
+    const part = item.part
+    switch (part.type) {
+      case 'text':
+        return <TextPartView key={part.id} part={part} isStreaming={isStreaming} />
+      case 'reasoning': {
+        const reasoningDone = endedReasoningIds.has(part.id)
+        return (
+          <ReasoningPartView
+            key={part.id}
+            part={part}
+            isStreaming={isStreaming && !reasoningDone}
+          />
+        )
+      }
+      case 'step-finish':
+        if (!showStepFinish) return null
+        return (
+          <StepFinishPartView
+            key={part.id}
+            part={part}
+            duration={showTiming ? duration : undefined}
+            turnDuration={showTiming ? turnDuration : undefined}
+            agent={agent}
+            modelLabel={modelLabel}
+            completedAt={showTiming ? completed : undefined}
+          />
+        )
+      case 'subtask':
+        return <SubtaskPartView key={part.id} part={part} />
+      case 'retry':
+        return <RetryPartView key={part.id} part={part} />
+      case 'compaction':
+        return <CompactionPartView key={part.id} part={part} />
+      default:
+        return null
+    }
+  }
+
   if (!isStreaming && parts.length === 0) {
     // 有错误时直接显示错误信息
     if (messageError) {
@@ -502,73 +807,30 @@ const AssistantMessageView = memo(function AssistantMessageView({
       {/* 只在贴底跟随时保留高度补间；用户看历史时关闭，避免消息生长把视口顶走 */}
       <SmoothHeight isActive={!!isStreaming && allowStreamingLayoutAnimation}>
         <div className="flex flex-col gap-2">
-          {renderItems.map((item: RenderItem, idx: number) => {
-            // 本消息内最后一个含 stepFinish 的 item（耗时/完成时刻只挂这里）
-            const isLastStepFinish =
-              idx ===
-              renderItems.findLastIndex(it =>
-                it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
-              )
-            // latestOnly 开：整轮最后一条 assistant 的最后一个 step 才显示
-            // latestOnly 关：本消息所有 step-finish 都显示（旧行为）
-            const showStepFinish =
-              allowStepFinishOnMessage && (!stepFinishDisplay.latestOnly || isLastStepFinish)
-            // duration / turnDuration / completedAt 始终只挂在本消息最后一个 step
-            const showTiming = showStepFinish && isLastStepFinish
-
-            if (item.type === 'tool-group') {
-              return (
-                <ToolGroup
-                  key={item.parts[0].id}
-                  parts={item.parts}
-                  stepFinish={showStepFinish ? item.stepFinish : undefined}
-                  duration={showTiming ? duration : undefined}
-                  turnDuration={showTiming ? turnDuration : undefined}
-                  isStreaming={isStreaming}
-                  agent={showStepFinish ? agent : undefined}
-                  modelLabel={showStepFinish ? modelLabel : undefined}
-                  completedAt={showTiming ? completed : undefined}
-                />
-              )
-            }
-
-            const part = item.part
-            switch (part.type) {
-              case 'text':
-                return <TextPartView key={part.id} part={part} isStreaming={isStreaming} />
-              case 'reasoning': {
-                const reasoningDone = endedReasoningIds.has(part.id)
-                return (
-                  <ReasoningPartView
-                    key={part.id}
-                    part={part}
-                    isStreaming={isStreaming && !reasoningDone}
-                  />
-                )
-              }
-              case 'step-finish':
-                if (!showStepFinish) return null
-                return (
-                  <StepFinishPartView
-                    key={part.id}
-                    part={part}
-                    duration={showTiming ? duration : undefined}
-                    turnDuration={showTiming ? turnDuration : undefined}
-                    agent={agent}
-                    modelLabel={modelLabel}
-                    completedAt={showTiming ? completed : undefined}
-                  />
-                )
-              case 'subtask':
-                return <SubtaskPartView key={part.id} part={part} />
-              case 'retry':
-                return <RetryPartView key={part.id} part={part} />
-              case 'compaction':
-                return <CompactionPartView key={part.id} part={part} />
-              default:
-                return null
-            }
-          })}
+          {showLocalProcessWrap ? (
+            <>
+              <ImmersiveProcessBlock
+                stateKey={`message:${info.id}:immersive-process`}
+                durationMs={processDurationMs}
+                isActive={processIsActive}
+              >
+                {immersiveSplit.processItems.map((item, idx) =>
+                  renderItem(item, idx, { forceHideStepFinish: true }),
+                )}
+              </ImmersiveProcessBlock>
+              {immersiveSplit.finalItems.map((item, idx) =>
+                renderItem(item, immersiveSplit.processItems.length + idx),
+              )}
+            </>
+          ) : immersiveContentScope === 'process' || immersiveContentScope === 'inline' ? (
+            immersiveSplit.processItems.map((item, idx) =>
+              renderItem(item, idx, { forceHideStepFinish: hideProcessStepFinish }),
+            )
+          ) : immersiveContentScope === 'final' ? (
+            immersiveSplit.finalItems.map((item, idx) => renderItem(item, idx))
+          ) : (
+            renderItems.map((item, idx) => renderItem(item, idx))
+          )}
         </div>
       </SmoothHeight>
 
@@ -714,6 +976,7 @@ const ToolGroup = memo(function ToolGroup({
   // 不区分 streaming 状态 — 单工具始终 compact，第二个工具到来时再自然过渡到 timeline
   const isSingleCompact = totalCount === 1 && !descriptiveToolSteps
   // steps header: 多工具始终显示；描述型 steps 模式下，单工具也显示
+  // 过程折叠只包一层「已处理」，内部 steps 描述照常保留
   const showStepsHeader = totalCount > 1 || descriptiveToolSteps
 
   // 统一容器结构 — ToolPartView 始终在同一 React 树位置，

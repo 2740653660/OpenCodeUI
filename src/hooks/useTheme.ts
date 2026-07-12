@@ -230,6 +230,17 @@ export function useTheme() {
     themeStore.setActionsOnLatestAssistantOnly(enabled)
   }, [])
 
+  const setProcessCollapseEnabled = useCallback((enabled: boolean) => {
+    themeStore.setProcessCollapseEnabled(enabled)
+  }, [])
+
+  const setProcessCollapseStyle = useCallback(
+    (style: import('../store/themeStore').ProcessCollapseStyle) => {
+      themeStore.setProcessCollapseStyle(style)
+    },
+    [],
+  )
+
   return {
     // 日夜模式（向后兼容）
     mode: state.colorMode,
@@ -336,5 +347,11 @@ export function useTheme() {
     // 连续助手消息仅在末尾显示分叉/复制
     actionsOnLatestAssistantOnly: state.actionsOnLatestAssistantOnly,
     setActionsOnLatestAssistantOnly,
+
+    // 整轮过程折叠（独立于沉浸模式）
+    processCollapseEnabled: state.processCollapseEnabled,
+    setProcessCollapseEnabled,
+    processCollapseStyle: state.processCollapseStyle,
+    setProcessCollapseStyle,
   }
 }

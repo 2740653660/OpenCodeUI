@@ -690,6 +690,32 @@ export function buildTurnDurationMap(messages: Message[], visibleMessages: Messa
 }
 
 /**
+ * 每个可见 assistant 消息所属回合的用户消息发送时间。
+ * 过程折叠前端实时计时的起点；完成后用 buildTurnDurationMap 校正。
+ */
+export function buildTurnUserStartMap(messages: Message[], visibleMessages: Message[]): Map<string, number> {
+  const map = new Map<string, number>()
+  const visibleAssistantIds = new Set(
+    visibleMessages.filter(message => message.info.role === 'assistant').map(message => message.info.id),
+  )
+
+  let currentUserCreated: number | null = null
+
+  for (const message of messages) {
+    if (message.info.role === 'user') {
+      currentUserCreated = message.info.time.created
+      continue
+    }
+    if (currentUserCreated == null || message.info.role !== 'assistant') continue
+    if (visibleAssistantIds.has(message.info.id)) {
+      map.set(message.info.id, currentUserCreated)
+    }
+  }
+
+  return map
+}
+
+/**
  * 每个用户回合里，最后一条可见 assistant 消息的 id 集合。
  * 用于「仅最新 Step」：中间 assistant 消息不显示 step 完成信息。
  */

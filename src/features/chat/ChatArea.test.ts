@@ -5,6 +5,7 @@ import {
   buildPageRenderSegments,
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
+  buildTurnUserStartMap,
   computeAnchorRestoreScrollDelta,
   computeExpandedPageRange,
   estimateMessageRenderWeight,
@@ -121,6 +122,7 @@ function createPageBlockProps(page = createPage([createAssistantMessage('assista
     onFork: () => undefined,
     canUndo: true,
     turnDurationMap: new Map<string, number>(),
+    turnUserStartMap: new Map<string, number>(),
     turnLatestAssistantIds: new Set<string>(),
     forkTargetIdMap: new Map<string, string | undefined>(),
     allowStreamingLayoutAnimation: false,
@@ -507,6 +509,23 @@ describe('buildTurnLatestAssistantIdSet', () => {
     expect(latest.has('assistant-1')).toBe(false)
     expect(latest.has('assistant-2')).toBe(true)
     expect(latest.has('assistant-3')).toBe(true)
+  })
+})
+
+describe('buildTurnUserStartMap', () => {
+  it('maps each visible assistant to its turn user created time', () => {
+    const messages = [
+      createUserMessage('user-1', 1000),
+      createAssistantMessage('assistant-1', [], 1001, 1200),
+      createAssistantMessage('assistant-2', [], 1201, 1500),
+      createUserMessage('user-2', 2000),
+      createAssistantMessage('assistant-3', [], 2001, 2600),
+    ]
+    const startMap = buildTurnUserStartMap(messages, messages)
+
+    expect(startMap.get('assistant-1')).toBe(1000)
+    expect(startMap.get('assistant-2')).toBe(1000)
+    expect(startMap.get('assistant-3')).toBe(2000)
   })
 })
 

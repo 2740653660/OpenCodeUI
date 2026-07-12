@@ -132,6 +132,11 @@ const DEFAULT_EXTERNAL_FILE_DROP_MODE: ExternalFileDropMode = 'upload-first'
 const DEFAULT_OUTLINE_CURRENT_HIGHLIGHT = true
 /** 连续助手消息时，仅在回合末尾显示分叉/复制按钮 */
 const DEFAULT_ACTIONS_ON_LATEST_ASSISTANT_ONLY = true
+/** 是否将整轮过程折叠为摘要行 */
+const DEFAULT_PROCESS_COLLAPSE_ENABLED = false
+/** 过程折叠样式：processed = 已处理 Xs（后续可扩展其它样式） */
+export type ProcessCollapseStyle = 'processed'
+const DEFAULT_PROCESS_COLLAPSE_STYLE: ProcessCollapseStyle = 'processed'
 
 export interface ThemeState {
   /** 当前选中的主题风格 ID */
@@ -186,6 +191,10 @@ export interface ThemeState {
   outlineCurrentHighlight: boolean
   /** 连续助手消息时，仅在回合末尾显示分叉/复制按钮 */
   actionsOnLatestAssistantOnly: boolean
+  /** 是否将整轮过程折叠为摘要行（独立于沉浸模式） */
+  processCollapseEnabled: boolean
+  /** 过程折叠样式 */
+  processCollapseStyle: ProcessCollapseStyle
 }
 
 export type ThemeBackup = ThemeState
@@ -220,6 +229,8 @@ const STORAGE_KEY_MANUAL_TERMINAL_TITLES = 'manual-terminal-titles'
 const STORAGE_KEY_EXTERNAL_FILE_DROP_MODE = 'external-file-drop-mode'
 const STORAGE_KEY_OUTLINE_CURRENT_HIGHLIGHT = 'outline-current-highlight'
 const STORAGE_KEY_ACTIONS_ON_LATEST_ASSISTANT_ONLY = 'actions-on-latest-assistant-only'
+const STORAGE_KEY_PROCESS_COLLAPSE_ENABLED = 'process-collapse-enabled'
+const STORAGE_KEY_PROCESS_COLLAPSE_STYLE = 'process-collapse-style'
 
 // ============================================
 // DOM Style Element IDs
@@ -355,6 +366,16 @@ class ThemeStore {
         ? DEFAULT_ACTIONS_ON_LATEST_ASSISTANT_ONLY
         : savedActionsOnLatestAssistantOnly === 'true'
 
+    const savedProcessCollapseEnabled = localStorage.getItem(STORAGE_KEY_PROCESS_COLLAPSE_ENABLED)
+    const processCollapseEnabled =
+      savedProcessCollapseEnabled === null
+        ? DEFAULT_PROCESS_COLLAPSE_ENABLED
+        : savedProcessCollapseEnabled === 'true'
+
+    const savedProcessCollapseStyle = localStorage.getItem(STORAGE_KEY_PROCESS_COLLAPSE_STYLE)
+    const processCollapseStyle: ProcessCollapseStyle =
+      savedProcessCollapseStyle === 'processed' ? 'processed' : DEFAULT_PROCESS_COLLAPSE_STYLE
+
     this.state = {
       presetId: normalizedPreset,
       colorMode: savedMode,
@@ -382,6 +403,8 @@ class ThemeStore {
       externalFileDropMode,
       outlineCurrentHighlight,
       actionsOnLatestAssistantOnly,
+      processCollapseEnabled,
+      processCollapseStyle,
     }
   }
 
@@ -469,6 +492,14 @@ class ThemeStore {
 
   get actionsOnLatestAssistantOnly() {
     return this.state.actionsOnLatestAssistantOnly
+  }
+
+  get processCollapseEnabled() {
+    return this.state.processCollapseEnabled
+  }
+
+  get processCollapseStyle() {
+    return this.state.processCollapseStyle
   }
 
   /** 获取当前主题预设（内置主题返回对象，自定义返回 undefined） */
@@ -758,6 +789,27 @@ class ThemeStore {
     this.emit()
   }
 
+  setProcessCollapseEnabled(enabled: boolean) {
+    if (this.state.processCollapseEnabled === enabled) return
+    // 开启过程折叠时默认打开描述型 steps（内部 steps 摘要仍可见）
+    const nextState = enabled
+      ? { ...this.state, processCollapseEnabled: true, descriptiveToolSteps: true }
+      : { ...this.state, processCollapseEnabled: false }
+    this.state = nextState
+    localStorage.setItem(STORAGE_KEY_PROCESS_COLLAPSE_ENABLED, String(enabled))
+    if (enabled) {
+      localStorage.setItem(STORAGE_KEY_DESCRIPTIVE_TOOL_STEPS, 'true')
+    }
+    this.emit()
+  }
+
+  setProcessCollapseStyle(style: ProcessCollapseStyle) {
+    if (this.state.processCollapseStyle === style) return
+    this.state = { ...this.state, processCollapseStyle: style }
+    localStorage.setItem(STORAGE_KEY_PROCESS_COLLAPSE_STYLE, style)
+    this.emit()
+  }
+
   // ---- Theme Application ----
 
   /** 初始化：应用当前主题到 DOM */
@@ -1009,6 +1061,12 @@ function normalizeThemeBackup(raw: unknown): ThemeBackup {
       typeof parsed?.actionsOnLatestAssistantOnly === 'boolean'
         ? parsed.actionsOnLatestAssistantOnly
         : DEFAULT_ACTIONS_ON_LATEST_ASSISTANT_ONLY,
+    processCollapseEnabled:
+      typeof parsed?.processCollapseEnabled === 'boolean'
+        ? parsed.processCollapseEnabled
+        : DEFAULT_PROCESS_COLLAPSE_ENABLED,
+    processCollapseStyle:
+      parsed?.processCollapseStyle === 'processed' ? 'processed' : DEFAULT_PROCESS_COLLAPSE_STYLE,
   }
 }
 
@@ -1056,4 +1114,6 @@ export function importThemeBackup(raw: unknown): void {
     STORAGE_KEY_ACTIONS_ON_LATEST_ASSISTANT_ONLY,
     String(backup.actionsOnLatestAssistantOnly),
   )
+  localStorage.setItem(STORAGE_KEY_PROCESS_COLLAPSE_ENABLED, String(backup.processCollapseEnabled))
+  localStorage.setItem(STORAGE_KEY_PROCESS_COLLAPSE_STYLE, backup.processCollapseStyle)
 }
