@@ -1097,7 +1097,7 @@ const PageBlock = memo(function PageBlock({
   const [nowMs, setNowMs] = useState(() => Date.now())
   const pageNeedsLiveTimer = useMemo(() => {
     if (!processCollapseEnabled) return false
-    // 任一条 assistant 仍在 streaming / 工具 running
+    // 任一条 assistant 仍在 streaming / 工具 running|pending
     if (
       page.rows.some(row =>
         row.messages.some(
@@ -1111,12 +1111,19 @@ const PageBlock = memo(function PageBlock({
     ) {
       return true
     }
-    // 用户已发送、本页尚无对应 assistant（等首包）
+    // 用户已发送：尚无 assistant，或最后一条 assistant 还没 completed（多步 agent 间隙）
     for (let i = 0; i < page.rows.length; i++) {
       const row = page.rows[i]
       if (row.messages[0]?.info.role !== 'user') continue
-      const next = page.rows[i + 1]
-      if (!next || next.messages[0]?.info.role === 'user') return true
+      let lastAssistant: Message | null = null
+      for (let j = i + 1; j < page.rows.length; j++) {
+        const next = page.rows[j]
+        if (next.messages[0]?.info.role === 'user') break
+        const msgs = next.messages
+        if (msgs.length > 0) lastAssistant = msgs[msgs.length - 1]
+      }
+      if (!lastAssistant) return true
+      if (lastAssistant.info.time.completed == null) return true
     }
     return false
   }, [page.rows, processCollapseEnabled])
@@ -1231,8 +1238,14 @@ const PageBlock = memo(function PageBlock({
                   (p.state.status === 'running' || p.state.status === 'pending'),
               ),
           )
-          // 仅「等首包 / 仍在跑」算 active；已完成历史回合不持续计时
-          const turnIsActive = waitingForFirstAssistant || hasLiveAssistantWork
+          const allAssistantsSettled =
+            assistantMessages.length > 0 &&
+            assistantMessages.every(m => m.info.time.completed != null) &&
+            !hasLiveAssistantWork
+          // 进行中必须前端实时走表：等首包 / 工具跑着 / 多步间隙 / 尚未全部 completed
+          // 只有整轮真正结束后才用后端 turnDurationMap 校正
+          const turnIsActive =
+            waitingForFirstAssistant || hasLiveAssistantWork || !allAssistantsSettled
 
           // 用户发送时间：优先 map；否则取本回合 user.created
           let userStart: number | undefined
@@ -1257,24 +1270,35 @@ const PageBlock = memo(function PageBlock({
           }
 
           const turnDurationMs = (() => {
-            // 1) 后端校正：回合完成耗时
+            if (userStart == null) return 0
+            // 进行中：始终前端实时（禁止被中间步骤的 turnDurationMap 冻住）
+            if (turnIsActive) return Math.max(0, nowMs - userStart)
+            // 整轮结束：后端校正
             for (const m of [...assistantMessages].reverse()) {
               const mapped = turnDurationMap.get(m.info.id)
               if (mapped != null && mapped > 0) return mapped
             }
-            if (userStart == null) return 0
-            // 2) 进行中：前端实时
-            if (turnIsActive) return Math.max(0, nowMs - userStart)
-            // 3) 已结束但 map 未到：用最后一条 completed
             const last = assistantMessages[assistantMessages.length - 1]
             const end = last?.info.time.completed
             if (end != null && end > userStart) return end - userStart
-            // 4) 兜底：不再用 now 继续涨
             return 0
           })()
 
           // 有过程、或用户已发还在等/跑 → 显示过程块
           const showProcessBlock = processMessages.length > 0 || turnIsActive
+          // 跨页续段：本页没有 user、且 row 标记 continuesFromPrevious → 不重复套「已处理」外壳
+          const isTurnContinuation =
+            turn.userRows.length === 0 &&
+            !!turn.assistantRows[0]?.continuesFromPrevious
+          // 稳定 stateKey：优先 user 发送时间，避免流结束后 key 变化导致重挂两个块
+          const processStateKey =
+            userStart != null
+              ? `turn-process:start:${userStart}`
+              : `turn-process:key:${turn.key}`
+
+          const processBody = processMessages.map(message =>
+            renderMessage(message, message.info.id === finalAssistantId ? 'process' : 'inline'),
+          )
 
           return (
             <div key={turn.key} className="contents">
@@ -1298,20 +1322,19 @@ const PageBlock = memo(function PageBlock({
                     } as ChatPage['rows'][number]),
                   false,
                   <>
-                    {showProcessBlock && (
-                      <ImmersiveProcessBlock
-                        stateKey={`turn:${turn.key}:immersive-process`}
-                        durationMs={turnDurationMs}
-                        isActive={turnIsActive}
-                      >
-                        {processMessages.map(message =>
-                          renderMessage(
-                            message,
-                            message.info.id === finalAssistantId ? 'process' : 'inline',
-                          ),
-                        )}
-                      </ImmersiveProcessBlock>
-                    )}
+                    {showProcessBlock &&
+                      (isTurnContinuation ? (
+                        // 续页只渲染过程内容，不再套一层「已处理」
+                        <div className="flex flex-col gap-2">{processBody}</div>
+                      ) : (
+                        <ImmersiveProcessBlock
+                          stateKey={processStateKey}
+                          durationMs={turnDurationMs}
+                          isActive={turnIsActive}
+                        >
+                          {processBody}
+                        </ImmersiveProcessBlock>
+                      ))}
                     {finalMessages.map(message =>
                       renderMessage(message, finalHasProcess ? 'final' : 'all'),
                     )}

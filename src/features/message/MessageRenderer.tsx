@@ -42,7 +42,7 @@ import { isToolPart, isVisibleReasoningPart, isVisibleTextPart } from '../../typ
 import { formatDuration, formatCompletedAt, formatDetailedDateTime } from '../../utils/formatUtils'
 import { useUiDisclosureState } from '../../utils/uiDisclosureState'
 
-/** 过程折叠：整轮过程收成「已处理 Xs」折叠块（跨多条 assistant） */
+/** 过程折叠：整轮过程收成「已处理 Xs」折叠块（动画与 tool steps 一致） */
 export function ImmersiveProcessBlock({
   children,
   durationMs,
@@ -572,12 +572,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
 }) {
   const { t } = useTranslation('message')
   const { parts, isStreaming, info } = message
-  const {
-    stepFinishDisplay,
-    completedAtFormat,
-    actionsOnLatestAssistantOnly,
-    processCollapseEnabled,
-  } = useTheme()
+  const { stepFinishDisplay, completedAtFormat, actionsOnLatestAssistantOnly } = useTheme()
   // 整轮最新 assistant 才允许显示 step 完成信息（latestOnly 时中间 assistant 全隐藏）
   const allowStepFinishOnMessage = !stepFinishDisplay.latestOnly || isTurnLatestAssistant
   // 分叉/复制：默认只在回合末尾助手消息显示，避免连续多条打断阅读
@@ -586,9 +581,8 @@ const AssistantMessageView = memo(function AssistantMessageView({
     immersiveContentScope !== 'inline' &&
     (!actionsOnLatestAssistantOnly || isTurnLatestAssistant)
   const actionBarClass = useMessageActionBarClass()
-  // 外层已包整轮过程块时，本消息不再自建折叠；只按 scope 切分内容
-  const wrapProcessLocally = processCollapseEnabled && immersiveContentScope === 'all'
-  // 过程块内隐藏 step-finish 明细（耗时已体现在「已处理 Xs」）；steps 描述行仍保留
+  // 过程折叠只由 ChatArea 整轮包一层；消息内不再自建「已处理」，避免结束后出现两个
+  // 过程块内隐藏 step-finish 明细（耗时已体现在外层）；steps 描述行仍保留
   const hideProcessStepFinish =
     immersiveContentScope === 'process' || immersiveContentScope === 'inline'
 
@@ -697,32 +691,6 @@ const AssistantMessageView = memo(function AssistantMessageView({
     [renderItems],
   )
 
-  // 过程块耗时：完成后用消息 duration 校正；进行中用 created→now 前端实时计时
-  // hooks 必须在任何 early return 之前
-  const processIsActive =
-    !!isStreaming ||
-    immersiveSplit.processItems.some(
-      item =>
-        item.type === 'tool-group' &&
-        item.parts.some(part => part.state.status === 'running' || part.state.status === 'pending'),
-    )
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  useEffect(() => {
-    if (!processIsActive) return
-    setNowMs(Date.now())
-    const id = window.setInterval(() => setNowMs(Date.now()), 250)
-    return () => window.clearInterval(id)
-  }, [processIsActive])
-
-  const processDurationMs = useMemo(() => {
-    // 后端校正：消息已完成
-    if (!processIsActive && duration != null && duration > 0) return duration
-    if (created) return Math.max(0, nowMs - created)
-    return duration
-  }, [created, duration, nowMs, processIsActive])
-
-  const showLocalProcessWrap = wrapProcessLocally && immersiveSplit.hasProcess
-
   const renderItem = (item: RenderItem, idx: number, options?: { forceHideStepFinish?: boolean }) => {
     const isLastStepFinish = idx === lastStepFinishIndex
     // latestOnly 开：整轮最后一条 assistant 的最后一个 step 才显示
@@ -802,35 +770,21 @@ const AssistantMessageView = memo(function AssistantMessageView({
     return <div className="w-full min-h-[40px]" />
   }
 
+  // 按 scope 切内容；过程折叠外壳只在 ChatArea 整轮层创建
+  const contentItems =
+    immersiveContentScope === 'process' || immersiveContentScope === 'inline'
+      ? immersiveSplit.processItems
+      : immersiveContentScope === 'final'
+        ? immersiveSplit.finalItems
+        : renderItems
+  const forceHideStepFinish = hideProcessStepFinish
+
   return (
     <div ref={wrapperRef} className="flex flex-col gap-2 w-full group">
       {/* 只在贴底跟随时保留高度补间；用户看历史时关闭，避免消息生长把视口顶走 */}
       <SmoothHeight isActive={!!isStreaming && allowStreamingLayoutAnimation}>
         <div className="flex flex-col gap-2">
-          {showLocalProcessWrap ? (
-            <>
-              <ImmersiveProcessBlock
-                stateKey={`message:${info.id}:immersive-process`}
-                durationMs={processDurationMs}
-                isActive={processIsActive}
-              >
-                {immersiveSplit.processItems.map((item, idx) =>
-                  renderItem(item, idx, { forceHideStepFinish: true }),
-                )}
-              </ImmersiveProcessBlock>
-              {immersiveSplit.finalItems.map((item, idx) =>
-                renderItem(item, immersiveSplit.processItems.length + idx),
-              )}
-            </>
-          ) : immersiveContentScope === 'process' || immersiveContentScope === 'inline' ? (
-            immersiveSplit.processItems.map((item, idx) =>
-              renderItem(item, idx, { forceHideStepFinish: hideProcessStepFinish }),
-            )
-          ) : immersiveContentScope === 'final' ? (
-            immersiveSplit.finalItems.map((item, idx) => renderItem(item, idx))
-          ) : (
-            renderItems.map((item, idx) => renderItem(item, idx))
-          )}
+          {contentItems.map((item, idx) => renderItem(item, idx, { forceHideStepFinish }))}
         </div>
       </SmoothHeight>
 
