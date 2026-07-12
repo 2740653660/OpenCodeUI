@@ -1134,7 +1134,11 @@ export function useChatSession({
   return {
     // State
     messages,
-    isStreaming,
+    // UI 活跃态：对齐官方 webui 的 session_working（session.status busy/retry）
+    // 不能只信 messageStore.isStreaming——多步 agent 间隙消息可能已 completed，但 session 仍 busy
+    isStreaming: isSessionBusy,
+    /** 消息级流式（不含 session.status）；一般 UI 用 isStreaming 即可 */
+    messageIsStreaming: isStreaming,
     sessionDirectory,
     canUndo,
     canRedo,

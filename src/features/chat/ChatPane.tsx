@@ -245,7 +245,7 @@ export const ChatPane = memo(function ChatPane({
   // ============================================
   const {
     messages,
-    isStreaming,
+    isStreaming, // session busy（statusMap busy/retry || message streaming）
     canUndo,
     canRedo,
     redoSteps,

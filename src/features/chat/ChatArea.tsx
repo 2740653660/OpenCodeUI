@@ -1256,11 +1256,13 @@ const PageBlock = memo(function PageBlock({
               p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
             )
           })
-          // 最新回合：活工作，或「还没有任何 assistant」时靠 session 表示等首包
-          // 旧回合：只跟本回合真实活工作
-          // 禁止：有 assistant 却只靠 sessionIsStreaming 撑空壳（会假「处理中」+ 真内容裸渲）
+          // 最新回合：活工作 或 session 仍 busy（对齐官方 session_working）
+          // 多步 agent 间隙里 assistant 可能已 completed，但 session.status 仍 busy，
+          // 必须继续「处理中」，不能提前「已处理」再弹回。
+          // 旧回合：只跟本回合真实活工作（不把 session busy 套到前一轮）
+          // 空壳仍靠 showProcessBlock 限制：无 process 内容时不套 ImmersiveProcessBlock
           const turnIsActive = isLatestUserTurn
-            ? hasLiveAssistantWork || (assistantMessages.length === 0 && sessionIsStreaming)
+            ? hasLiveAssistantWork || sessionIsStreaming
             : hasLiveAssistantWork
 
           // 用户发送时间：优先 map；否则取本回合 user.created
