@@ -66,12 +66,16 @@ const ImmersiveProcessHeader = memo(function ImmersiveProcessHeader({
   const { t } = useTranslation('message')
   // 1s 足够（formatDuration 在 <60s 为 0.1s 精度，但整页稳定优先于 0.1s 跳动）
   const now = useNow(1000, isActive && startedAt != null)
+  const liveMs = isActive && startedAt != null ? Math.max(0, now - startedAt) : null
+  // 进行中持续刷新快照；结束后若无后端 duration，冻住最后一次 live 读数（异步追加消息顶替前一轮时用）
+  const lastLiveMsRef = useRef(0)
+  if (liveMs != null) lastLiveMsRef.current = liveMs
   const displayMs =
-    isActive && startedAt != null
-      ? Math.max(0, now - startedAt)
+    liveMs != null
+      ? liveMs
       : durationMs != null && durationMs > 0
         ? durationMs
-        : 0
+        : lastLiveMsRef.current
   const durationLabel = formatDuration(displayMs)
   const label = isActive
     ? t('processingWithDuration', { duration: durationLabel })

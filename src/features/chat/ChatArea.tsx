@@ -1248,19 +1248,19 @@ const PageBlock = memo(function PageBlock({
           // 必须用全局最新 user，不能用页内最后一回合（分页时页尾不是会话最新）
           const isLatestUserTurn =
             latestUserMessageId != null && turnUserMessageIds.includes(latestUserMessageId)
-          const hasLiveAssistantWork = assistantMessages.some(
-            m =>
-              m.isStreaming ||
-              m.parts.some(
-                p =>
-                  p.type === 'tool' &&
-                  (p.state.status === 'running' || p.state.status === 'pending'),
-              ),
+          // 工具仍在跑：任何回合都算处理中（异步追加新消息也不能提前标完成）
+          const hasLiveToolWork = assistantMessages.some(m =>
+            m.parts.some(
+              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
+            ),
           )
-          // 进行中：本回合仍有活工具/流，或（仅全局最新 user 回合）session 仍在跑。
-          // 旧逻辑用「无 assistant」当永远 waiting，打断后追加新消息时旧回合会一直「处理中」计时。
-          const turnIsActive =
-            hasLiveAssistantWork || (isLatestUserTurn && sessionIsStreaming)
+          const hasStreamingAssistant = assistantMessages.some(m => m.isStreaming)
+          // 最新回合：工具跑着 / 流式中 / session 等首包或多步间隙
+          // 已被新 user 顶替的旧回合：只看工具是否还在跑；工具全结束后立刻「已处理」
+          // （旧回合 isStreaming 可能残留，不能单独把旧回合钉死在「处理中」）
+          const turnIsActive = isLatestUserTurn
+            ? hasLiveToolWork || hasStreamingAssistant || sessionIsStreaming
+            : hasLiveToolWork
 
           // 用户发送时间：优先 map；否则取本回合 user.created
           let userStart: number | undefined
@@ -1284,25 +1284,37 @@ const PageBlock = memo(function PageBlock({
             userStart = assistantMessages[0].info.time.created
           }
 
-          // 整轮结束后的校正时长；进行中由 ImmersiveProcessHeader 用 startedAt 本地走表
+          // 整轮结束后的校正时长（真实 steps 墙钟）：
+          // 1) turnDurationMap：user.created → 最后 assistant.completed
+          // 2) 兜底：assistant.completed / 工具 state.time.end 的最晚值 − userStart
+          // 3) 再没有：header 冻住最后一次 live 读数
+          // 进行中仍由 ImmersiveProcessHeader 用 startedAt 本地走表。
           const settledDurationMs = (() => {
             if (turnIsActive || userStart == null) return undefined
             for (const m of [...assistantMessages].reverse()) {
               const mapped = turnDurationMap.get(m.info.id)
               if (mapped != null && mapped > 0) return mapped
             }
-            const last = assistantMessages[assistantMessages.length - 1]
-            const end = last?.info.time.completed
-            if (end != null && end > userStart) return end - userStart
-            return 0
+            let latestEnd: number | undefined
+            for (const m of assistantMessages) {
+              const completed = m.info.time.completed
+              if (completed != null && (latestEnd == null || completed > latestEnd)) latestEnd = completed
+              for (const p of m.parts) {
+                if (p.type !== 'tool') continue
+                const toolEnd = p.state.time?.end
+                if (toolEnd != null && (latestEnd == null || toolEnd > latestEnd)) latestEnd = toolEnd
+              }
+            }
+            if (latestEnd != null && latestEnd > userStart) return latestEnd - userStart
+            return undefined
           })()
 
           // 有过程、或用户已发还在等/跑 → 显示过程块
           const showProcessBlock = processMessages.length > 0 || turnIsActive
-          // 跨页续段：本页没有 user、且 row 标记 continuesFromPrevious → 不重复套「已处理」外壳
-          const isTurnContinuation =
-            turn.userRows.length === 0 &&
-            !!turn.assistantRows[0]?.continuesFromPrevious
+          // 「处理中/已处理」外壳只挂在带 user 的那一页。
+          // 跨页续段（页首孤立 assistant）无论 continuesFromPrevious 是否标上，都不再套第二层，
+          // 否则多步 agent / 分页边界会叠出两个计时 header（刷新后更稳现）。
+          const wrapProcessShell = turn.userRows.length > 0
           // 稳定 stateKey：优先 user 发送时间，避免流结束后 key 变化导致重挂两个块
           const processStateKey =
             userStart != null
@@ -1336,10 +1348,7 @@ const PageBlock = memo(function PageBlock({
                   false,
                   <>
                     {showProcessBlock &&
-                      (isTurnContinuation ? (
-                        // 续页只渲染过程内容，不再套一层「已处理」
-                        <div className="flex flex-col gap-2">{processBody}</div>
-                      ) : (
+                      (wrapProcessShell ? (
                         <ImmersiveProcessBlock
                           stateKey={processStateKey}
                           startedAt={userStart}
@@ -1348,6 +1357,9 @@ const PageBlock = memo(function PageBlock({
                         >
                           {processBody}
                         </ImmersiveProcessBlock>
+                      ) : (
+                        // 续页 / 无 user 片段：只渲染过程内容，外壳在有 user 的那一页
+                        <div className="flex flex-col gap-2">{processBody}</div>
                       ))}
                     {finalMessages.map(message =>
                       renderMessage(message, finalHasProcess ? 'final' : 'all'),
