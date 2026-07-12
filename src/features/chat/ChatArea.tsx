@@ -174,7 +174,7 @@ export const ChatArea = memo(
         turnUserStartMap: turnUserStartMapProp,
         turnLatestAssistantIds: turnLatestAssistantIdsProp,
         sessionId,
-        isStreaming: _isStreaming = false,
+        isStreaming: sessionIsStreaming = false,
         allowStreamingLayoutAnimation = true,
         loadState = 'idle',
         loadError,
@@ -268,6 +268,13 @@ export const ChatArea = memo(
         () => turnLatestAssistantIdsProp ?? buildTurnLatestAssistantIdSet(visibleMessages),
         [turnLatestAssistantIdsProp, visibleMessages],
       )
+      // 最新用户消息 id：过程折叠「处理中」只允许挂在这一回合上，避免打断后旧回合一直计时
+      const latestUserMessageId = useMemo(() => {
+        for (let i = visibleMessages.length - 1; i >= 0; i--) {
+          if (visibleMessages[i].info.role === 'user') return visibleMessages[i].info.id
+        }
+        return null
+      }, [visibleMessages])
 
       const activePages = pageRecords ?? pages
 
@@ -980,6 +987,8 @@ export const ChatArea = memo(
                   turnUserStartMap={localTurnUserStartMap}
                   turnLatestAssistantIds={localTurnLatestAssistantIds}
                   forkTargetIdMap={localForkTargetIdMap}
+                  latestUserMessageId={latestUserMessageId}
+                  sessionIsStreaming={sessionIsStreaming}
                   allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
                   onMeasuredHeightChange={updateMeasuredPageHeight}
                 />
@@ -1018,6 +1027,10 @@ interface PageBlockProps {
   turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
   forkTargetIdMap: Map<string, string | undefined>
+  /** 全局最新用户消息 id；「处理中」只挂这一回合 */
+  latestUserMessageId: string | null
+  /** session 级流式：idle 后无活工作的回合不再计时 */
+  sessionIsStreaming: boolean
   allowStreamingLayoutAnimation: boolean
   onMeasuredHeightChange: (pageKey: string, nextHeight: number) => void
 }
@@ -1055,6 +1068,8 @@ export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlock
   ) {
     return false
   }
+  if (previous.sessionIsStreaming !== next.sessionIsStreaming) return false
+  if (previous.latestUserMessageId !== next.latestUserMessageId) return false
   if (previous.onMeasuredHeightChange !== next.onMeasuredHeightChange) return false
   return pageMessageDerivedValuesEqual(previous, next)
 }
@@ -1128,6 +1143,8 @@ const PageBlock = memo(function PageBlock({
   turnUserStartMap,
   turnLatestAssistantIds,
   forkTargetIdMap,
+  latestUserMessageId,
+  sessionIsStreaming,
   allowStreamingLayoutAnimation,
   onMeasuredHeightChange,
 }: PageBlockProps) {
@@ -1227,8 +1244,10 @@ const PageBlock = memo(function PageBlock({
           const finalMessages =
             finalAssistant && (finalHasAnswer || !finalHasProcess) ? [finalAssistant] : []
 
-          const waitingForFirstAssistant =
-            turn.userRows.length > 0 && assistantMessages.length === 0
+          const turnUserMessageIds = turn.userRows.flatMap(row => row.messages.map(m => m.info.id))
+          // 必须用全局最新 user，不能用页内最后一回合（分页时页尾不是会话最新）
+          const isLatestUserTurn =
+            latestUserMessageId != null && turnUserMessageIds.includes(latestUserMessageId)
           const hasLiveAssistantWork = assistantMessages.some(
             m =>
               m.isStreaming ||
@@ -1238,14 +1257,10 @@ const PageBlock = memo(function PageBlock({
                   (p.state.status === 'running' || p.state.status === 'pending'),
               ),
           )
-          const allAssistantsSettled =
-            assistantMessages.length > 0 &&
-            assistantMessages.every(m => m.info.time.completed != null) &&
-            !hasLiveAssistantWork
-          // 进行中必须前端实时走表：等首包 / 工具跑着 / 多步间隙 / 尚未全部 completed
-          // 只有整轮真正结束后才用后端 turnDurationMap 校正
+          // 进行中：本回合仍有活工具/流，或（仅全局最新 user 回合）session 仍在跑。
+          // 旧逻辑用「无 assistant」当永远 waiting，打断后追加新消息时旧回合会一直「处理中」计时。
           const turnIsActive =
-            waitingForFirstAssistant || hasLiveAssistantWork || !allAssistantsSettled
+            hasLiveAssistantWork || (isLatestUserTurn && sessionIsStreaming)
 
           // 用户发送时间：优先 map；否则取本回合 user.created
           let userStart: number | undefined
