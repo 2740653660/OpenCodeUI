@@ -888,7 +888,7 @@ export const ChatPane = memo(function ChatPane({
           registerInputBox={registerInputBox}
           isAtBottom={isAtBottom}
           showScrollToBottom={!isAtBottom}
-          onScrollToBottom={() => chatAreaRef.current?.scrollToBottom()}
+          onScrollToBottom={() => chatAreaRef.current?.scrollToBottom(true)}
           collapsedPermission={
             !inlineToolRequests && pendingPermissionRequests.length > 0 && permissionCollapsed
               ? {

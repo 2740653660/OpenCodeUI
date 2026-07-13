@@ -56,8 +56,8 @@ const LOAD_MORE_ANCHOR_SETTLE_MS = 600
 const LOAD_MORE_ANCHOR_FALLBACK_MS = 5000
 const PENDING_SCROLL_TARGET_KEEPALIVE_MS = 900
 const ADJACENT_PAGE_PRELOAD_VIEWPORTS = 12
-/** 跟流阈值：比 UI 贴底阈值更紧，避免轻微上滚仍被拽回 */
-const STICK_FOLLOW_THRESHOLD_PX = 24
+/** 滚回绝对底部才恢复跟流；阈值要极严，避免「上滚一点又被判定贴底」 */
+const STICK_RESUME_THRESHOLD_PX = 2
 
 /** 正向 column：距底部距离 */
 function getDistanceFromBottom(root: HTMLElement) {
@@ -73,16 +73,6 @@ function scrollRootToBottom(root: HTMLElement, behavior: ScrollBehavior = 'auto'
   if (behavior === 'smooth') root.scrollTo({ top, behavior })
   else root.scrollTop = top
 }
-
-function isStuckToBottom(root: HTMLElement, threshold = STICK_FOLLOW_THRESHOLD_PX) {
-  return getDistanceFromBottom(root) <= threshold
-}
-
-/**
- * 贴底跟流意图：只被用户主动离开底部打断。
- * 内容暴涨时浏览器会暂时增大 distFromBottom；若用距离判断会误停跟流。
- * 因此 pin 只看 stickyFollow，不看瞬时距离。
- */
 
 type LoadMoreAnchorSnapshot = {
   messageId: string
@@ -215,10 +205,26 @@ export const ChatArea = memo(
       const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
       const topSentinelRef = useRef<HTMLDivElement>(null)
       const isAtBottomRef = useRef(true)
-      /** 跟流意图：默认 true；仅用户上滚离开底部后 false；回到底部/点回底 true */
+      /**
+       * 跟流意图（use-stick-to-bottom / escape-when-up）：
+       * - 默认 true
+       * - 用户上滚 → 立刻 false
+       * - 只有「用户往下滚并到绝对底」或点回底 → true
+       * - 程序化钉底绝不能单独把它改回 true
+       */
       const stickyFollowRef = useRef(true)
-      /** 程序化钉底中：忽略 scroll 事件对 isAtBottom 的误判 */
-      const pinningToBottomRef = useRef(false)
+      /** 递增：取消进行中的 rAF 钉底 / 跟流循环 */
+      const pinGenerationRef = useRef(0)
+      /** 最近一次 scrollTop，用于区分上滚 / 下滚（不用宽阈值 re-pin） */
+      const lastScrollTopRef = useRef(0)
+      /** 程序化改 scrollTop 期间忽略方向判定 */
+      const ignoreScrollDirectionRef = useRef(false)
+      /** 高度暴涨时 rAF 连续钉底的循环 id */
+      const followLoopRafRef = useRef<number | null>(null)
+      /** 非流式时：内容变高后额外跟几帧，避免只钉一帧跟不上 */
+      const followBurstUntilRef = useRef(0)
+      const isStreamingRef = useRef(_isStreaming)
+      isStreamingRef.current = _isStreaming
       const loadMoreRef = useRef(onLoadMore)
       const isLoadingRef = useRef(false)
       const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -532,29 +538,47 @@ export const ChatArea = memo(
         const root = scrollRef.current
         if (!root) return
 
+        const releaseStickyFollow = () => {
+          // 用户上滚：立刻停跟 + 作废进行中的钉底 / 跟流循环
+          stickyFollowRef.current = false
+          pinGenerationRef.current += 1
+          followBurstUntilRef.current = 0
+          if (followLoopRafRef.current !== null) {
+            cancelAnimationFrame(followLoopRafRef.current)
+            followLoopRafRef.current = null
+          }
+        }
+
         const onScroll = () => {
-          // 程序化钉底过程中：强制保持贴底态，避免内容暴涨瞬间误关跟流
-          if (pinningToBottomRef.current) {
+          const hasOverflow = root.scrollHeight > root.clientHeight + 1
+          const distFromBottom = getDistanceFromBottom(root)
+          const distFromTop = getDistanceFromTop(root)
+
+          // 程序化钉底 / 点回底期间：强制 UI 贴底，避免中间 scroll 事件把按钮又亮出来
+          if (ignoreScrollDirectionRef.current || stickyFollowRef.current) {
             if (!isAtBottomRef.current) {
               isAtBottomRef.current = true
               onAtBottomChange?.(true)
             }
+            if (!hasOverflow || distFromBottom <= STICK_RESUME_THRESHOLD_PX) {
+              stickyFollowRef.current = true
+            }
+            lastScrollTopRef.current = root.scrollTop
             updateScrollOffsetSnapshot()
             return
           }
 
-          const hasOverflow = root.scrollHeight > root.clientHeight + 1
-          const distFromBottom = getDistanceFromBottom(root)
-          const distFromTop = getDistanceFromTop(root)
+          // UI 贴底阈值宽一点（回底按钮）；跟流不靠 scroll 方向判定
           const atBottom = !hasOverflow || distFromBottom <= atBottomThreshold
           const previous = isAtBottomRef.current
           isAtBottomRef.current = atBottom
           if (previous !== atBottom) onAtBottomChange?.(atBottom)
 
-          // 用户回到底部 → 恢复跟流；明显离开底部且已有上滚意图 → 停跟流
-          if (atBottom || distFromBottom <= STICK_FOLLOW_THRESHOLD_PX) {
+          // escape 只认 wheel/touch/key；恢复只认绝对贴底
+          if (!hasOverflow || distFromBottom <= STICK_RESUME_THRESHOLD_PX) {
             stickyFollowRef.current = true
           }
+          lastScrollTopRef.current = root.scrollTop
 
           if (
             loadMoreIntentAnchorRef.current === null &&
@@ -569,8 +593,7 @@ export const ChatArea = memo(
 
         const onOlderScrollIntent = () => {
           lastWheelInputAtRef.current = Date.now()
-          // 用户主动往上看：立刻停止跟流（不要等距离阈值，避免和钉底抢）
-          stickyFollowRef.current = false
+          releaseStickyFollow()
           if (pendingLoadMoreAnchorRef.current && !isLoadingRef.current) {
             releasePendingLoadMoreAnchor()
           }
@@ -580,15 +603,33 @@ export const ChatArea = memo(
           tryLoadMoreRef.current()
         }
 
+        // 展开折叠/点消息：等同用户主动操作，停跟流，高度向下长不要钉底
+        const onUserPointerDown = (event: PointerEvent) => {
+          // 只认主按键；滚动条拖拽不在此路径
+          if (event.button !== 0) return
+          const target = event.target
+          if (!(target instanceof Element) || !root.contains(target)) return
+          // 点滚动条区域不释放（否则拖条会被当成交互）
+          const rect = root.getBoundingClientRect()
+          if (event.clientX >= rect.right - 20) return
+          releaseStickyFollow()
+          // 立刻刷新 UI 贴底态，让回底按钮能出现（若已离开绝对底）
+          const distFromBottom = getDistanceFromBottom(root)
+          const atBottom = root.scrollHeight <= root.clientHeight + 1 || distFromBottom <= atBottomThreshold
+          if (isAtBottomRef.current !== atBottom) {
+            isAtBottomRef.current = atBottom
+            onAtBottomChange?.(atBottom)
+          }
+        }
+
         const onWheel = (event: WheelEvent) => {
-          // 正向：deltaY < 0 往上看更老；deltaY > 0 往下贴底
-          if (event.deltaY > 0) {
-            releasePendingLoadMoreAnchor()
-            // 往下滚时若已近底，恢复跟流
-            if (isStuckToBottom(root, atBottomThreshold)) stickyFollowRef.current = true
+          // 正向：deltaY < 0 往上看更老 → 立刻 escape（在 scroll 之前）
+          if (event.deltaY < 0) {
+            onOlderScrollIntent()
             return
           }
-          onOlderScrollIntent()
+          // 往下滚：不主动 re-pin；等 scroll 到绝对底再恢复
+          releasePendingLoadMoreAnchor()
         }
 
         const onKeyDown = (event: KeyboardEvent) => {
@@ -623,7 +664,7 @@ export const ChatArea = memo(
           const startOffset = touchStartOffset
           touchStartOffset = null
           const nextOffset = getDistanceFromBottom(root)
-          // 距底变大 = 往上翻历史
+          // 距底变大 = 往上翻历史 → escape
           if (nextOffset > startOffset + 1) onOlderScrollIntent()
           else if (nextOffset < startOffset - 1) releasePendingLoadMoreAnchor()
           else if (getDistanceFromTop(root) <= 1) onOlderScrollIntent()
@@ -648,6 +689,8 @@ export const ChatArea = memo(
         root.addEventListener('touchstart', onTouchStart, { passive: true })
         root.addEventListener('touchend', onTouchEnd, { passive: true })
         root.addEventListener('pointerdown', onPointerDown, { passive: true })
+        // capture：折叠按钮 pointerdown 时先于状态切换停跟流，避免展开长高被钉底
+        root.addEventListener('pointerdown', onUserPointerDown, { capture: true, passive: true })
         window.addEventListener('pointerup', onPointerUp, { passive: true })
         window.addEventListener('keydown', onKeyDown)
         updateScrollOffsetSnapshot()
@@ -657,6 +700,7 @@ export const ChatArea = memo(
           root.removeEventListener('touchstart', onTouchStart)
           root.removeEventListener('touchend', onTouchEnd)
           root.removeEventListener('pointerdown', onPointerDown)
+          root.removeEventListener('pointerdown', onUserPointerDown, true)
           window.removeEventListener('pointerup', onPointerUp)
           window.removeEventListener('keydown', onKeyDown)
         }
@@ -668,7 +712,7 @@ export const ChatArea = memo(
         prevSessionIdRef.current = sessionId
         isAtBottomRef.current = true
         stickyFollowRef.current = true
-        pinningToBottomRef.current = false
+        pinGenerationRef.current += 1
         loadMoreBlockedRef.current = true
         pendingLoadMoreAnchorRef.current = null
         loadMoreIntentAnchorRef.current = null
@@ -691,7 +735,10 @@ export const ChatArea = memo(
           const root = scrollRef.current
           if (!root) return
           stickyFollowRef.current = true
+          ignoreScrollDirectionRef.current = true
           scrollRootToBottom(root)
+          lastScrollTopRef.current = root.scrollTop
+          ignoreScrollDirectionRef.current = false
           updateScrollOffsetSnapshot()
           animate(root, { opacity: [0, 1] }, { duration: 0.2, ease: 'easeOut' })
         })
@@ -712,62 +759,93 @@ export const ChatArea = memo(
         if (loadState !== 'loaded') return
         requestAnimationFrame(() => {
           const root = scrollRef.current
-          if (root && isAtBottomRef.current) {
+          // 只用跟流意图，避免 isAtBottom 宽阈值在用户上滚后仍钉底
+          if (root && stickyFollowRef.current) {
+            ignoreScrollDirectionRef.current = true
             scrollRootToBottom(root)
+            lastScrollTopRef.current = root.scrollTop
+            ignoreScrollDirectionRef.current = false
             updateScrollOffsetSnapshot()
           }
         })
       }, [loadState, updateScrollOffsetSnapshot])
 
-      const pinToBottomIfFollowing = useCallback(() => {
+      /** 同步钉死底部：scrollTop = max，并同步 UI 贴底态（回底按钮） */
+      const pinToBottomSync = useCallback(() => {
         const root = scrollRef.current
         if (!root || !stickyFollowRef.current) return false
 
         const maxTop = Math.max(0, root.scrollHeight - root.clientHeight)
-        // 已在底：仍可能下一帧继续长高，轻量再钉，不打断 pinning 状态机
-        if (Math.abs(root.scrollTop - maxTop) < 1) {
-          root.scrollTop = maxTop
+        // 始终写满，不因 0.5px 跳过（亚像素累积会露底）
+        ignoreScrollDirectionRef.current = true
+        root.scrollTop = maxTop
+        lastScrollTopRef.current = maxTop
+        if (!isAtBottomRef.current) {
           isAtBottomRef.current = true
-          return true
+          onAtBottomChange?.(true)
+        } else {
+          isAtBottomRef.current = true
         }
-
-        pinningToBottomRef.current = true
-        const before = root.scrollTop
-        scrollRootToBottom(root)
-        isAtBottomRef.current = true
-
-        // 双 rAF：工具块/图片连挂时第二帧再钉，避免半途 dist 飙高误关 UI 贴底
-        requestAnimationFrame(() => {
-          if (stickyFollowRef.current) {
-            scrollRootToBottom(root)
-            isAtBottomRef.current = true
-          }
-          requestAnimationFrame(() => {
-            pinningToBottomRef.current = false
-            if (stickyFollowRef.current) {
-              scrollRootToBottom(root)
-              isAtBottomRef.current = true
-            }
-            if (Math.abs(root.scrollTop - before) >= 1) updateScrollOffsetSnapshot()
-          })
+        queueMicrotask(() => {
+          ignoreScrollDirectionRef.current = false
         })
         return true
-      }, [updateScrollOffsetSnapshot])
+      }, [onAtBottomChange])
 
-      // 贴底跟流：只看 stickyFollow 意图 + 内容壳高度，不看瞬时 distFromBottom
+      /**
+       * 锚定死底部 + 自然生长跟随：
+       * sticky 为 true 时每帧 rAF 钉底，高度再快也能跟上。
+       * 用户上滚 release 后 generation 作废，循环停。
+       */
+      const pinToBottomIfFollowing = useCallback(() => {
+        if (!stickyFollowRef.current) return false
+
+        pinToBottomSync()
+
+        const generation = pinGenerationRef.current
+        if (followLoopRafRef.current !== null) return true
+
+        const tick = () => {
+          followLoopRafRef.current = null
+          if (pinGenerationRef.current !== generation || !stickyFollowRef.current) return
+
+          pinToBottomSync()
+
+          // sticky 期间持续跟；escape 后 generation 变，自然停
+          if (stickyFollowRef.current) {
+            followLoopRafRef.current = requestAnimationFrame(tick)
+          }
+        }
+
+        followLoopRafRef.current = requestAnimationFrame(tick)
+        return true
+      }, [pinToBottomSync])
+
+      // 内容壳高度变化 → 立刻钉 + 保证 rAF 循环在跑
       useEffect(() => {
         const root = scrollRoot
         const content = chatContentRef.current
         if (!root || !content || typeof ResizeObserver === 'undefined') return
 
         const ro = new ResizeObserver(() => {
+          if (!stickyFollowRef.current) return
           pinToBottomIfFollowing()
         })
         ro.observe(content)
-        return () => ro.disconnect()
+
+        // 挂上时若在跟流，直接启动循环
+        if (stickyFollowRef.current) pinToBottomIfFollowing()
+
+        return () => {
+          ro.disconnect()
+          if (followLoopRafRef.current !== null) {
+            cancelAnimationFrame(followLoopRafRef.current)
+            followLoopRafRef.current = null
+          }
+        }
       }, [pinToBottomIfFollowing, scrollRoot, sessionId, visibleMessages.length])
 
-      // React 提交后（批量工具块挂载）再钉一次，补 RO 可能晚一拍的情况
+      // 任意消息/页高变化后 layout 再钉（工具块瞬间挂载比 RO 更早）
       useLayoutEffect(() => {
         if (!stickyFollowRef.current) return
         pinToBottomIfFollowing()
@@ -1035,15 +1113,29 @@ export const ChatArea = memo(
           scrollToBottom: (instant = false) => {
             const root = scrollRef.current
             if (!root) return
+            // 点回底 = 明确恢复跟流 + 立刻隐藏回底按钮
             stickyFollowRef.current = true
             isAtBottomRef.current = true
             onAtBottomChange?.(true)
+            ignoreScrollDirectionRef.current = true
+            // 按钮路径用 instant，避免 smooth 中途 scroll 事件把 isAtBottom 打回 false
             scrollRootToBottom(root, instant ? 'auto' : 'smooth')
+            lastScrollTopRef.current = root.scrollTop
+            pinToBottomIfFollowing()
+            requestAnimationFrame(() => {
+              if (!stickyFollowRef.current) {
+                ignoreScrollDirectionRef.current = false
+                return
+              }
+              scrollRootToBottom(root, 'auto')
+              lastScrollTopRef.current = root.scrollTop
+              isAtBottomRef.current = true
+              onAtBottomChange?.(true)
+              ignoreScrollDirectionRef.current = false
+            })
           },
           scrollToBottomIfAtBottom: () => {
-            const root = scrollRef.current
-            if (!root) return
-            // 跟流意图在就钉；不要用瞬时距离（工具块暴涨时会误判）
+            // SSE 跟流：只看意图，用户上滚后绝不抢
             if (!stickyFollowRef.current) return
             pinToBottomIfFollowing()
           },
