@@ -800,7 +800,6 @@ export const ChatPane = memo(function ChatPane({
               turnUserStartMap={chatPageViewModel.turnUserStartMap}
               turnLatestAssistantIds={chatPageViewModel.turnLatestAssistantIds}
               sessionId={routeSessionId}
-              isStreaming={isStreaming}
               allowStreamingLayoutAnimation={isAtBottom}
               loadState={renderedLoadState}
               loadError={loadError}

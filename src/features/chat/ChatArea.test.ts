@@ -125,11 +125,6 @@ function createPageBlockProps(page = createPage([createAssistantMessage('assista
     turnUserStartMap: new Map<string, number>(),
     turnLatestAssistantIds: new Set<string>(),
     forkTargetIdMap: new Map<string, string | undefined>(),
-    latestUserMessageId: null,
-    allVisibleMessages: page.messageIds.length
-      ? page.rows.flatMap(row => row.messages)
-      : [],
-    sessionIsStreaming: false,
     allowStreamingLayoutAnimation: false,
     onMeasuredHeightChange: () => undefined,
   }

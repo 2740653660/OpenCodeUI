@@ -28,7 +28,6 @@ import {
   ImmersiveProcessBlock,
   MessageRenderer,
   messageHasImmersiveFinal,
-  messageHasImmersiveProcess,
 } from '../message'
 import { MessageErrorView } from '../message/parts'
 import { messageStore } from '../../store'
@@ -125,6 +124,26 @@ function findLoadMoreAnchorTarget(root: HTMLElement, anchor: LoadMoreAnchorSnaps
   return null
 }
 
+/**
+ * 估算过程折叠收起后的 assistant row 高度。
+ * 收起后只有 ImmersiveProcessBlock header (~32px) + 壳外 final text。
+ */
+function estimateCollapsedAssistantRowHeight(messages: Message[]): number {
+  let total = 24 // padding
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0) total += 8
+    total += 32 // header
+    // final text：只算非 synthetic 的 text part
+    for (const part of messages[i].parts) {
+      if (part.type === 'text' && !(part as { synthetic?: boolean }).synthetic) {
+        const text = (part as { text: string }).text
+        total += Math.max(40, Math.ceil(text.length / 100) * 20)
+      }
+    }
+  }
+  return total
+}
+
 interface ChatAreaProps {
   messages: Message[]
   pageRecords?: StableChatPage[]
@@ -174,7 +193,6 @@ export const ChatArea = memo(
         turnUserStartMap: turnUserStartMapProp,
         turnLatestAssistantIds: turnLatestAssistantIdsProp,
         sessionId,
-        isStreaming: sessionIsStreaming = false,
         allowStreamingLayoutAnimation = true,
         loadState = 'idle',
         loadError,
@@ -194,6 +212,7 @@ export const ChatArea = memo(
       ref,
     ) => {
       const { t } = useTranslation('chat')
+      const { processCollapseEnabled } = useTheme()
       const scrollRef = useRef<HTMLDivElement>(null)
       const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
       const topSentinelRef = useRef<HTMLDivElement>(null)
@@ -268,15 +287,27 @@ export const ChatArea = memo(
         () => turnLatestAssistantIdsProp ?? buildTurnLatestAssistantIdSet(visibleMessages),
         [turnLatestAssistantIdsProp, visibleMessages],
       )
-      // 最新用户消息 id：过程折叠「处理中」只允许挂在这一回合上，避免打断后旧回合一直计时
-      const latestUserMessageId = useMemo(() => {
-        for (let i = visibleMessages.length - 1; i >= 0; i--) {
-          if (visibleMessages[i].info.role === 'user') return visibleMessages[i].info.id
-        }
-        return null
-      }, [visibleMessages])
 
-      const activePages = pageRecords ?? pages
+      const activePages = useMemo(() => {
+        const rawPages = pageRecords ?? pages
+        if (!processCollapseEnabled) return rawPages
+        // 过程折叠收起后，assistant row 实际高度远小于估算（只有 header + final text）。
+        // 虚拟化折叠页面用 estimatedHeight 做偏移；不修正会导致展开时大幅滚动修正。
+        let changed = false
+        const adjusted = rawPages.map(page => {
+          let pageChanged = false
+          const newRows = page.rows.map(row => {
+            if (row.messages[0]?.info.role !== 'assistant') return row
+            pageChanged = true
+            return { ...row, estimatedHeight: estimateCollapsedAssistantRowHeight(row.messages) }
+          })
+          if (!pageChanged) return page
+          changed = true
+          const newEstimatedHeight = newRows.reduce((sum, row) => sum + row.estimatedHeight, 0)
+          return { ...page, rows: newRows, estimatedHeight: newEstimatedHeight }
+        })
+        return changed ? adjusted : rawPages
+      }, [pageRecords, pages, processCollapseEnabled])
 
       useLayoutEffect(() => {
         const previous = previousActivePagesRef.current
@@ -987,9 +1018,6 @@ export const ChatArea = memo(
                   turnUserStartMap={localTurnUserStartMap}
                   turnLatestAssistantIds={localTurnLatestAssistantIds}
                   forkTargetIdMap={localForkTargetIdMap}
-                  latestUserMessageId={latestUserMessageId}
-                  allVisibleMessages={visibleMessages}
-                  sessionIsStreaming={sessionIsStreaming}
                   allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
                   onMeasuredHeightChange={updateMeasuredPageHeight}
                 />
@@ -1028,12 +1056,6 @@ interface PageBlockProps {
   turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
   forkTargetIdMap: Map<string, string | undefined>
-  /** 全局最新用户消息 id；「处理中」只挂这一回合 */
-  latestUserMessageId: string | null
-  /** 全局可见消息（过程折叠用：像 tool steps 一样把 user 后的 assistant 收成内容袋） */
-  allVisibleMessages: Message[]
-  /** session 级流式：idle 后无活工作的回合不再计时 */
-  sessionIsStreaming: boolean
   allowStreamingLayoutAnimation: boolean
   onMeasuredHeightChange: (pageKey: string, nextHeight: number) => void
 }
@@ -1071,9 +1093,6 @@ export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlock
   ) {
     return false
   }
-  if (previous.sessionIsStreaming !== next.sessionIsStreaming) return false
-  if (previous.latestUserMessageId !== next.latestUserMessageId) return false
-  if (previous.allVisibleMessages !== next.allVisibleMessages) return false
   if (previous.onMeasuredHeightChange !== next.onMeasuredHeightChange) return false
   return pageMessageDerivedValuesEqual(previous, next)
 }
@@ -1147,9 +1166,6 @@ const PageBlock = memo(function PageBlock({
   turnUserStartMap,
   turnLatestAssistantIds,
   forkTargetIdMap,
-  latestUserMessageId,
-  allVisibleMessages,
-  sessionIsStreaming,
   allowStreamingLayoutAnimation,
   onMeasuredHeightChange,
 }: PageBlockProps) {
@@ -1171,7 +1187,6 @@ const PageBlock = memo(function PageBlock({
         allowStreamingLayoutAnimation={message.isStreaming ? allowStreamingLayoutAnimation : false}
         turnDuration={turnDurationMap.get(message.info.id)}
         isTurnLatestAssistant={
-          // final 位 = 回合末尾展示位
           immersiveContentScope === 'final'
             ? true
             : message.info.role === 'assistant'
@@ -1217,201 +1232,94 @@ const PageBlock = memo(function PageBlock({
     )
   }
 
-  // 过程折叠：像 tool steps 一样先合成「回合内容袋」，再挂 Working 壳。
-  // 不要只靠 page.rows 切 turn——流式时 assistant 可能还没进本页 rows，会留下空壳。
+  // 过程折叠：按 row 建折叠块（row 已合并连续 assistant）。
+  // 只用 page.rows，不跨页 — 每页独立处理，不会出现空页白屏。
   if (processCollapseEnabled) {
-    type ProcessTurn = {
-      key: string
-      userMessage: Message | null
-      /** 本回合全部 assistant（全局可见列表上 user 之后到下一 user 之前） */
-      assistants: Message[]
-      /** 本页是否拥有该 user（壳只在 user 所在页挂） */
-      ownsUser: boolean
-      /** 本页是否拥有任一 assistant 内容 */
-      ownsAssistantContent: boolean
-    }
-
-    const pageMessageIdSet = new Set(page.messageIds)
-    const turns: ProcessTurn[] = []
-    let current: ProcessTurn | null = null
-
-    // 用全局可见消息建袋（与 tool follow-up merge 同思路：内容先合，再渲染）
-    for (const message of allVisibleMessages) {
-      if (message.info.role === 'user') {
-        if (current) turns.push(current)
-        current = {
-          key: `turn:${message.info.id}`,
-          userMessage: message,
-          assistants: [],
-          ownsUser: pageMessageIdSet.has(message.info.id),
-          ownsAssistantContent: false,
-        }
-        continue
-      }
-      if (message.info.role !== 'assistant') continue
-      if (!current) {
-        // 页首/历史续段：无本页 user 的 assistant 袋
-        current = {
-          key: `turn:orphan:${message.info.id}`,
-          userMessage: null,
-          assistants: [message],
-          ownsUser: false,
-          ownsAssistantContent: pageMessageIdSet.has(message.info.id),
-        }
-        continue
-      }
-      current.assistants.push(message)
-      if (pageMessageIdSet.has(message.info.id)) current.ownsAssistantContent = true
-    }
-    if (current) turns.push(current)
-
-    // 有 user 的回合：只在 ownsUser 页渲染（全袋），避免 user 页 + assistant 页各渲一遍正文
-    // 无 user 的续段：只在 ownsAssistantContent 页渲染
-    const pageTurns = turns.filter(t =>
-      t.userMessage ? t.ownsUser : t.ownsAssistantContent,
-    )
-
     return (
       <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
-        {pageTurns.map((turn, turnIndex) => {
-          const assistantMessages = turn.assistants
-          const finalAssistant =
-            assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null
-          const finalAssistantId = finalAssistant?.info.id ?? null
-          const userId = turn.userMessage?.info.id ?? null
-          const isLatestUserTurn = userId != null && userId === latestUserMessageId
-
-          const hasLiveAssistantWork = assistantMessages.some(m => {
-            if (m.info.time.completed != null) {
-              return m.parts.some(
-                p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
-              )
-            }
-            return true
-          })
-          const turnIsActive = isLatestUserTurn
-            ? hasLiveAssistantWork || sessionIsStreaming
-            : hasLiveAssistantWork
-
-          // 流式：整袋进壳；结束：壳内过程 + 壳外仅一条 final 正文
-          const forceAllInShell = turnIsActive
-          const finalHasProcess = !!finalAssistant && messageHasImmersiveProcess(finalAssistant)
-          const finalHasAnswer = !!finalAssistant && messageHasImmersiveFinal(finalAssistant)
-
-          const userStart =
-            turn.userMessage?.info.time.created ??
-            (finalAssistantId != null ? turnUserStartMap.get(finalAssistantId) : undefined) ??
-            assistantMessages[0]?.info.time.created
-
-          const settledDurationMs = (() => {
-            if (turnIsActive || userStart == null) return undefined
-            for (const m of [...assistantMessages].reverse()) {
-              const mapped = turnDurationMap.get(m.info.id)
-              if (mapped != null && mapped > 0) return mapped
-            }
-            let latestEnd: number | undefined
-            for (const m of assistantMessages) {
-              const completed = m.info.time.completed
-              if (completed != null && (latestEnd == null || completed > latestEnd)) latestEnd = completed
-              for (const p of m.parts) {
-                if (p.type !== 'tool') continue
-                const toolEnd = p.state.time?.end
-                if (toolEnd != null && (latestEnd == null || toolEnd > latestEnd)) latestEnd = toolEnd
-              }
-            }
-            if (latestEnd != null && latestEnd > userStart) return latestEnd - userStart
-            return undefined
-          })()
-
-          // 壳 + final 正文只在 ownsUser 页挂一次（杜绝双正文）
-          const wrapProcessShell = turn.ownsUser
-          const waitingForFirstAssistant = turnIsActive && assistantMessages.length === 0 && wrapProcessShell
-
-          // 壳内：流式=全袋；结束=中间全进 + 末尾仅过程（final 正文不进壳）
-          const processBodyMessages = (() => {
-            if (!wrapProcessShell) {
-              return assistantMessages.filter(m => pageMessageIdSet.has(m.info.id))
-            }
-            if (forceAllInShell) return assistantMessages
-            return assistantMessages.filter(m => {
-              if (m.info.id !== finalAssistantId) return true
-              // 末尾：有过程才进壳（process scope 会去掉最终 text）
-              return finalHasProcess
-            })
-          })()
-
-          // 壳外正文：仅 user 页、已结束、有最终 text → 恰好一条
-          const showFinalOutside =
-            wrapProcessShell && !forceAllInShell && !!finalAssistant && finalHasAnswer
-
-          const showProcessBlock = processBodyMessages.length > 0 || waitingForFirstAssistant
-          const processStateKey =
-            userId != null
-              ? `turn-process:user:${userId}`
-              : userStart != null
-                ? `turn-process:start:${userStart}`
-                : `turn-process:key:${turn.key}`
-          const processShellKey = `shell:${processStateKey}`
-
-          const processBody = processBodyMessages.map(message => {
-            // 末尾 → process（思考/工具，无最终 text）；中间 → inline（整条在壳内）
-            const scope = message.info.id === finalAssistantId ? ('process' as const) : ('inline' as const)
-            return renderMessage(message, scope)
-          })
-
-          // 孤儿续段：无壳、无 final（final 只在 user 页）
-          if (!wrapProcessShell) {
-            return (
-              <div key={turn.key} className="contents">
-                {renderRowShell(
-                  processShellKey,
-                  false,
-                  <>
-                    {processBodyMessages.map(message =>
-                      renderMessage(
-                        message,
-                        message.info.id === finalAssistantId ? 'process' : 'inline',
-                      ),
-                    )}
-                  </>,
-                  {
-                    continuesFromPrevious: true,
-                    continuesToNext: turnIndex < pageTurns.length - 1,
-                  },
-                )}
-              </div>
+        {page.rows.map(row => {
+          const isUserRow = row.messages[0].info.role === 'user'
+          if (isUserRow) {
+            return renderRowShell(
+              row.key,
+              true,
+              row.messages.map(message => renderMessage(message)),
+              { continuesFromPrevious: row.continuesFromPrevious, continuesToNext: row.continuesToNext },
             )
           }
 
-          return (
-            <div key={turn.key} className="contents">
-              {turn.userMessage &&
-                pageMessageIdSet.has(turn.userMessage.info.id) &&
-                renderRowShell(`user:${turn.userMessage.info.id}`, true, renderMessage(turn.userMessage))}
-              {(showProcessBlock || showFinalOutside) &&
-                renderRowShell(
-                  processShellKey,
-                  false,
-                  <>
-                    {showProcessBlock && (
-                      <ImmersiveProcessBlock
-                        stateKey={processStateKey}
-                        startedAt={userStart}
-                        durationMs={settledDurationMs}
-                        isActive={turnIsActive}
-                      >
-                        {processBody}
-                      </ImmersiveProcessBlock>
-                    )}
-                    {/* 壳外只挂这一次 final 正文（final scope 硬过滤无 reasoning） */}
-                    {showFinalOutside && finalAssistant && renderMessage(finalAssistant, 'final')}
-                  </>,
-                  {
-                    continuesFromPrevious: false,
-                    continuesToNext: turnIndex < pageTurns.length - 1,
-                  },
+          // assistant row：所有 assistant 合并到一个过程折叠块
+          const assistants = row.messages
+          const finalAssistant = assistants[assistants.length - 1]
+          const finalAssistantId = finalAssistant.info.id
+
+          // 活跃判断：只看本 row 内消息实际状态（不依赖 sessionIsStreaming，避免旧回合闪 working）
+          // 必须先查 isStreaming：buildVisibleMessageEntries 合并连续 assistant 后，
+          // info.time.completed 是第一条的，但 isStreaming 是 anyStreaming。
+          // 若只查 completed==null，合并消息 completed!=null 会被误判为已结束。
+          const rowIsActive = assistants.some(m => {
+            if (m.isStreaming) return true
+            if (m.info.time.completed == null) return true
+            return m.parts.some(
+              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
+            )
+          })
+
+          const finalHasAnswer = messageHasImmersiveFinal(finalAssistant)
+
+          // 计时起点：优先 turnUserStartMap，否则取 row 首条 assistant 的 created
+          const userStart =
+            turnUserStartMap.get(finalAssistantId) ?? assistants[0]?.info.time.created
+
+          // 结束后的校正时长
+          let settledDurationMs: number | undefined
+          if (!rowIsActive && userStart != null) {
+            for (const m of [...assistants].reverse()) {
+              const mapped = turnDurationMap.get(m.info.id)
+              if (mapped != null && mapped > 0) {
+                settledDurationMs = mapped
+                break
+              }
+            }
+            if (settledDurationMs == null) {
+              let latestEnd: number | undefined
+              for (const m of assistants) {
+                const completed = m.info.time.completed
+                if (completed != null && (latestEnd == null || completed > latestEnd)) latestEnd = completed
+                for (const p of m.parts) {
+                  if (p.type !== 'tool') continue
+                  const toolEnd = p.state.time?.end
+                  if (toolEnd != null && (latestEnd == null || toolEnd > latestEnd)) latestEnd = toolEnd
+                }
+              }
+              if (latestEnd != null && latestEnd > userStart) settledDurationMs = latestEnd - userStart
+            }
+          }
+
+          const processStateKey = `turn-process:row:${row.key}`
+          // 流式活跃时全部进壳；结束后末条 assistant 拆出 final 正文
+          const showFinalOutside = !rowIsActive && finalHasAnswer
+
+          return renderRowShell(
+            row.key,
+            false,
+            <>
+              <ImmersiveProcessBlock
+                stateKey={processStateKey}
+                startedAt={userStart}
+                durationMs={settledDurationMs}
+                isActive={rowIsActive}
+              >
+                {assistants.map(message =>
+                  renderMessage(
+                    message,
+                    message.info.id === finalAssistantId && !rowIsActive ? 'process' : 'inline',
+                  ),
                 )}
-            </div>
+              </ImmersiveProcessBlock>
+              {showFinalOutside && renderMessage(finalAssistant, 'final')}
+            </>,
+            { continuesFromPrevious: row.continuesFromPrevious, continuesToNext: row.continuesToNext },
           )
         })}
       </div>

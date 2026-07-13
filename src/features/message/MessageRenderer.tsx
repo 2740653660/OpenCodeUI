@@ -857,6 +857,41 @@ const AssistantMessageView = memo(function AssistantMessageView({
     }
   }
 
+  // 按 scope 切内容（turn bag 遗留路径；过程折叠走下面的自包含分支，不会用到 contentItems）
+  const contentItems = useMemo(() => {
+    const finalPartIds = new Set(
+      immersiveSplit.finalItems.flatMap(item =>
+        item.type === 'tool-group' ? item.parts.map(p => p.id) : [item.part.id],
+      ),
+    )
+
+    if (immersiveContentScope === 'inline') return immersiveSplit.processItems
+
+    if (immersiveContentScope === 'process') {
+      return immersiveSplit.processItems.filter(item => {
+        if (item.type === 'single' && finalPartIds.has(item.part.id)) return false
+        return true
+      })
+    }
+
+    if (immersiveContentScope === 'final') {
+      return immersiveSplit.finalItems.filter(item => {
+        if (item.type !== 'single') return false
+        return item.part.type === 'text' || item.part.type === 'step-finish'
+      })
+    }
+
+    return renderItems
+  }, [immersiveContentScope, immersiveSplit.finalItems, immersiveSplit.processItems, renderItems])
+  const forceHideStepFinish = hideProcessStepFinish || immersiveContentScope === 'final'
+  const lastStepFinishIndexInContent = useMemo(
+    () =>
+      contentItems.findLastIndex(it =>
+        it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
+      ),
+    [contentItems],
+  )
+
   if (!isStreaming && parts.length === 0) {
     // 有错误时直接显示错误信息
     if (messageError) {
@@ -871,45 +906,6 @@ const AssistantMessageView = memo(function AssistantMessageView({
     return <div className="w-full min-h-[40px]" />
   }
 
-  // 按 scope 切内容；过程折叠外壳只在 ChatArea 整轮层创建
-  // final：只允许最后一段 text + step-finish，绝不含 reasoning/tool（否则壳外正文会「带着思考」）
-  // process：去掉最终 text run（那些只在 final 位出现），避免壳内/壳外各一份正文
-  const contentItems = useMemo(() => {
-    const finalPartIds = new Set(
-      immersiveSplit.finalItems.flatMap(item =>
-        item.type === 'tool-group' ? item.parts.map(p => p.id) : [item.part.id],
-      ),
-    )
-
-    if (immersiveContentScope === 'inline') return immersiveSplit.processItems
-
-    if (immersiveContentScope === 'process') {
-      // 过程里保留思考/工具/中间说明；剔除已划入 final 的 text/step-finish
-      return immersiveSplit.processItems.filter(item => {
-        if (item.type === 'single' && finalPartIds.has(item.part.id)) return false
-        return true
-      })
-    }
-
-    if (immersiveContentScope === 'final') {
-      // 硬过滤：只 text + step-finish
-      return immersiveSplit.finalItems.filter(item => {
-        if (item.type !== 'single') return false
-        return item.part.type === 'text' || item.part.type === 'step-finish'
-      })
-    }
-
-    return renderItems
-  }, [immersiveContentScope, immersiveSplit.finalItems, immersiveSplit.processItems, renderItems])
-  // process/inline：藏细节；final：藏内嵌（step 常在 process 的 tool-group 上），改挂正文后
-  const forceHideStepFinish = hideProcessStepFinish || immersiveContentScope === 'final'
-  const lastStepFinishIndexInContent = useMemo(
-    () =>
-      contentItems.findLastIndex(it =>
-        it.type === 'tool-group' ? !!it.stepFinish : it.part.type === 'step-finish',
-      ),
-    [contentItems],
-  )
   // final 位：本消息 step-finish 提到正文后、操作按钮前（与 latestOnly 门闩一致）
   const showDetachedStepFinish =
     immersiveContentScope === 'final' &&
