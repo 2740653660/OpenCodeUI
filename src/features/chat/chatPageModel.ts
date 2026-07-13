@@ -232,11 +232,13 @@ export function buildChatPages(
   for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex--) {
     const row = rows[rowIndex]
     const rowRenderWeight = row.renderWeight ?? estimateGroupRenderWeight(row.messages)
-    if (
-      currentRows.length > 0 &&
-      (currentMessageCount + row.messages.length > pageMessageCount ||
-        currentRenderWeight + rowRenderWeight > maxRenderWeight)
-    ) {
+    // 切页条件：当前页非空 + 超限。但 continuesFromPrevious 的 row 不能开始新页——
+    // 它是上一 row 的续接（同一回合被 splitOversizedMessageGroups 切开），
+    // 分到不同 page 会导致过程折叠块跨页。
+    const wouldExceedLimit =
+      currentMessageCount + row.messages.length > pageMessageCount ||
+      currentRenderWeight + rowRenderWeight > maxRenderWeight
+    if (currentRows.length > 0 && wouldExceedLimit && !row.continuesFromPrevious) {
       renderPages.push(buildChatPage(currentRows))
       currentRows = []
       currentMessageCount = 0

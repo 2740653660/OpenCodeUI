@@ -1296,7 +1296,12 @@ const PageBlock = memo(function PageBlock({
             }
           }
 
-          const processStateKey = `turn-process:row:${row.key}`
+          const processStateKey = (() => {
+            // 基于 userStart（回合级）而非 row key，跨页时两个壳共享同一 stateKey
+            // → useUiDisclosureState 同步展开/收起，视觉上是一个连续的折叠块
+            if (userStart != null) return `turn-process:userstart:${userStart}`
+            return `turn-process:row:${row.key}`
+          })()
           // 流式活跃时全部进壳；结束后末条 assistant 拆出 final 正文
           const showFinalOutside = !rowIsActive && finalHasAnswer
 
