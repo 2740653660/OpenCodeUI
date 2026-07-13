@@ -49,6 +49,8 @@ import {
   computeExpandedPageRange,
   expandSelectionWithPageKeys,
   PAGE_ADJACENT_OVERSCAN,
+  PAGE_EXTREME_RENDER_WEIGHT,
+  PAGE_MESSAGE_COUNT,
   seedMeasuredPageHeightsFromPreviousPages,
   type ChatPage,
   type StableChatPage,
@@ -202,7 +204,7 @@ export const ChatArea = memo(
         onUndo,
         onFork,
         canUndo,
-        hasMoreHistory: _hasMoreHistory = false,
+        hasMoreHistory = false,
         registerMessage,
         retryStatus = null,
         bottomPadding = 0,
@@ -225,7 +227,6 @@ export const ChatArea = memo(
       const [measuredPageHeights, setMeasuredPageHeights] = useState<Record<string, number>>({})
       const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null)
       const [pendingLoadMoreAnchorSourceId, setPendingLoadMoreAnchorSourceId] = useState<string | null>(null)
-      const scrollSnapshotRafRef = useRef<number | null>(null)
       const pendingLoadMoreAnchorRef = useRef<LoadMoreAnchorSnapshot | null>(null)
       const loadMoreIntentAnchorRef = useRef<LoadMoreAnchorSnapshot | null>(null)
       const loadMoreRequestCompletedRef = useRef(false)
@@ -242,6 +243,11 @@ export const ChatArea = memo(
       const loadMorePagesBeforeRef = useRef<StableChatPage[] | null>(null)
       const isMountedRef = useRef(true)
       const topSentinelVisibleRef = useRef(false)
+      const prefetchRoundRef = useRef(0)
+      // loadMore 新增页面的 key，强制预展开让 PageBlock 挂载测量高度
+      const [premeasurePageKeys, setPremeasurePageKeys] = useState<Set<string>>(new Set())
+      const premeasurePageKeysRef = useRef(premeasurePageKeys)
+      premeasurePageKeysRef.current = premeasurePageKeys
       const lastWheelInputAtRef = useRef(0)
       const tryLoadMoreRef = useRef<() => void>(NOOP)
 
@@ -266,8 +272,8 @@ export const ChatArea = memo(
         [visibleMessageEntries, visibleMessagesProp],
       )
       const pages = useMemo<StableChatPage[]>(
-        () => (shouldUseExternalViewModel ? [] : buildContentKeyedChatPages(visibleMessages)),
-        [shouldUseExternalViewModel, visibleMessages],
+        () => (shouldUseExternalViewModel ? [] : buildContentKeyedChatPages(visibleMessages, PAGE_MESSAGE_COUNT, PAGE_EXTREME_RENDER_WEIGHT, PAGE_MESSAGE_COUNT, processCollapseEnabled)),
+        [shouldUseExternalViewModel, visibleMessages, processCollapseEnabled],
       )
       const localForkTargetIdMap = useMemo(
         () =>
@@ -352,10 +358,12 @@ export const ChatArea = memo(
             measuredPageHeights,
             scrollOffsetFromBottom,
             viewportHeight,
-            adjacentPageCount: PAGE_ADJACENT_OVERSCAN,
+            // 过程折叠收起后页面很矮，滚动快时 1 页 overscan 来不及预展开 → 跳变。
+            // 增大到 3 页，让更多页面提前测量，滚动时高度已就绪。
+            adjacentPageCount: processCollapseEnabled ? 3 : PAGE_ADJACENT_OVERSCAN,
             adjacentPageMaxSourceHeight: viewportHeight * ADJACENT_PAGE_PRELOAD_VIEWPORTS,
           }),
-        [activePages, measuredPageHeights, scrollOffsetFromBottom, viewportHeight],
+        [activePages, measuredPageHeights, processCollapseEnabled, scrollOffsetFromBottom, viewportHeight],
       )
 
       const expandedPageSelection = useMemo(
@@ -371,15 +379,32 @@ export const ChatArea = memo(
         return keys
       }, [activePages])
 
-      const renderPageSelection = useMemo(
-        () =>
-          expandSelectionWithPageKeys({
-            pages: activePages,
-            expandedPageSelection,
-            pageKeys: streamingPageKeys,
-          }),
-        [activePages, expandedPageSelection, streamingPageKeys],
-      )
+      const knownPageKeysRef = useRef<Set<string>>(new Set())
+      const renderPageSelection = useMemo(() => {
+        // 同步检测新页面（不依赖 effect），立即加入预展开集合
+        // 避免 loadMore 新页面先 collapsed 渲染一帧再展开 → 闪
+        const known = knownPageKeysRef.current
+        const newKeys = new Set<string>()
+        for (const page of activePages) {
+          if (!known.has(page.key)) {
+            newKeys.add(page.key)
+          }
+        }
+        if (newKeys.size > 0) {
+          knownPageKeysRef.current = new Set([...known, ...newKeys])
+          setPremeasurePageKeys(prev => {
+            const next = new Set(prev)
+            for (const k of newKeys) next.add(k)
+            return next
+          })
+        }
+        const allKeys = new Set([...streamingPageKeys, ...premeasurePageKeys, ...newKeys])
+        return expandSelectionWithPageKeys({
+          pages: activePages,
+          expandedPageSelection,
+          pageKeys: allKeys,
+        })
+      }, [activePages, expandedPageSelection, premeasurePageKeys, streamingPageKeys])
 
       const renderSegments = useMemo(
         () =>
@@ -455,7 +480,6 @@ export const ChatArea = memo(
           clearPendingLoadMoreTimer()
           clearPendingScrollTimer()
           clearPendingAnchorReleaseTimer()
-          if (scrollSnapshotRafRef.current !== null) cancelAnimationFrame(scrollSnapshotRafRef.current)
           if (pendingAnchorClearRafRef.current !== null) cancelAnimationFrame(pendingAnchorClearRafRef.current)
           if (pendingSessionResetRafRef.current !== null) cancelAnimationFrame(pendingSessionResetRafRef.current)
         }
@@ -471,14 +495,9 @@ export const ChatArea = memo(
         if (!root) return
 
         const nextOffset = Math.abs(root.scrollTop)
-        if (scrollSnapshotRafRef.current !== null) cancelAnimationFrame(scrollSnapshotRafRef.current)
-        scrollSnapshotRafRef.current = requestAnimationFrame(() => {
-          scrollSnapshotRafRef.current = null
-          setScrollOffsetFromBottom(prev => {
-            const delta = nextOffset - prev
-            if (Math.abs(delta) < 1) return prev
-            return nextOffset
-          })
+        setScrollOffsetFromBottom(prev => {
+          if (Math.abs(nextOffset - prev) < 1) return prev
+          return nextOffset
         })
       }, [])
 
@@ -632,6 +651,9 @@ export const ChatArea = memo(
         clearPendingLoadMoreAnchorMessage()
         topSentinelVisibleRef.current = false
         loadMoreRequestIdRef.current += 1
+        prefetchRoundRef.current = 0
+        setPremeasurePageKeys(new Set())
+        knownPageKeysRef.current = new Set()
         isLoadingRef.current = false
         clearPendingLoadMoreTimer()
         clearPendingAnchorReleaseTimer()
@@ -741,6 +763,46 @@ export const ChatArea = memo(
       useEffect(() => {
         tryLoadMoreRef.current = tryLoadMore
       }, [tryLoadMore])
+
+      // 预拉取：不等触顶，剩余可滚动距离不足时提前拉取更多历史，
+      // 配合 premeasurePageKeys 让新页面在视口外就预测量好高度。
+      // 不经过 tryLoadMore 的守卫（sentinel/capture/block），直接触发加载。
+      const prefetchLoadMoreRef = useRef<() => void>(() => {})
+      const activePagesRef = useRef(activePages)
+      activePagesRef.current = activePages
+      prefetchLoadMoreRef.current = async () => {
+        if (isLoadingRef.current) return
+        const fn = loadMoreRef.current
+        const sid = sessionId
+        if (!sid || !fn) return
+        const hasMore = messageStore.getSessionState(sid)?.hasMoreHistory ?? false
+        if (!hasMore) return
+        loadMorePagesBeforeRef.current = activePagesRef.current
+        isLoadingRef.current = true
+        setIsLoadingMore(true)
+        const requestId = ++loadMoreRequestIdRef.current
+        const requestSessionId = sid
+        try {
+          await fn()
+        } finally {
+          if (isMountedRef.current && loadMoreRequestIdRef.current === requestId && sessionId === requestSessionId) {
+            isLoadingRef.current = false
+            setIsLoadingMore(false)
+          }
+        }
+      }
+
+      useEffect(() => {
+        if (!hasMoreHistory || loadState !== 'loaded' || isLoadingMore) return
+        const root = scrollRef.current
+        if (!root) return
+        const remainingToTop = root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop)
+        // 剩余不足 8 倍视口高度就预拉取（约 3-4 页），给预测量留足时间
+        const prefetchThreshold = Math.max(1, viewportHeight) * 8
+        if (remainingToTop > prefetchThreshold) return
+        prefetchRoundRef.current += 1
+        prefetchLoadMoreRef.current()
+      }, [hasMoreHistory, isLoadingMore, loadState, scrollOffsetFromBottom, viewportHeight])
 
       useEffect(() => {
         const sentinel = topSentinelRef.current
@@ -873,26 +935,43 @@ export const ChatArea = memo(
 
       const updateMeasuredPageHeight = useCallback((pageKey: string, nextHeight: number) => {
         if (nextHeight <= 0) return
+        let shouldUpdate = false
+        let shouldSetAnchor = false
         setMeasuredPageHeights(previous => {
           const current = previous[pageKey] ?? null
-          // 与测量侧阈值对齐，避免动画中途 1px 抖动触发整树更新
           if (current !== null && Math.abs(current - nextHeight) < PAGE_HEIGHT_MEASURE_MIN_DELTA_PX) {
             return previous
           }
+          shouldUpdate = true
           const root = scrollRef.current
-          // steps/过程折叠正在锁 header 时，页高锚点让路，避免两个补偿互相抢 scrollTop
+          // 只在「已测量页面高度变化」（流式增长、折叠收起）才设锚点补偿。
+          // 首次测量不设（虚拟化预展开/loadMore 预测量）。
+          // loadMore 期间不设（DOM 重排中锚点位置不稳定，修正方向可能错误 → 拉到底部）。
           if (
             root &&
+            current !== null &&
             !isAtBottomRef.current &&
             !isScrollAnchorLocked() &&
-            current !== null &&
-            Math.abs(current - nextHeight) >= PAGE_HEIGHT_MEASURE_MIN_DELTA_PX
+            !isLoadingRef.current &&
+            premeasurePageKeysRef.current.size === 0
           ) {
-            pendingLayoutAnchorRef.current = captureLoadMoreAnchor(root)
+            shouldSetAnchor = true
           }
           const next = { ...previous, [pageKey]: nextHeight }
           return next
         })
+        // 副作用在 updater 外执行，避免嵌套 setState
+        if (shouldSetAnchor && scrollRef.current) {
+          pendingLayoutAnchorRef.current = captureLoadMoreAnchor(scrollRef.current)
+        }
+        if (shouldUpdate && premeasurePageKeysRef.current.has(pageKey)) {
+          setPremeasurePageKeys(prev => {
+            if (!prev.has(pageKey)) return prev
+            const next = new Set(prev)
+            next.delete(pageKey)
+            return next
+          })
+        }
       }, [])
 
       const requestScrollToMessage = useCallback(

@@ -309,7 +309,7 @@ export const ChatPane = memo(function ChatPane({
   const inputDisabled = !!routeSessionId && loadState === 'error' && messages.length === 0
   const { processCollapseEnabled: processCollapseEnabledEarly } = useTheme()
   const rowCountLimit = processCollapseEnabledEarly ? PAGE_ROW_COUNT_FOR_COLLAPSE : undefined
-  const chatPageViewModel = useChatPageViewModel(renderedMessages, rowCountLimit)
+  const chatPageViewModel = useChatPageViewModel(renderedMessages, rowCountLimit, processCollapseEnabledEarly)
 
   const connectionError = useMemo<MessageError | undefined>(() => {
     if (!activeServer) {

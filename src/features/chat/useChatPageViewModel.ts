@@ -183,6 +183,7 @@ export function buildChatPageViewModel(
   messages: Message[],
   previous?: ChatPageViewModel,
   rowCountLimit?: number,
+  collapsed: boolean = false,
 ): ChatPageViewModel {
   const visibleMessageEntries = reuseVisibleMessageEntries(
     previous?.visibleMessageEntries,
@@ -196,6 +197,7 @@ export function buildChatPageViewModel(
       nextMessages: visibleMessages,
       allocateKey: page => page.key,
       rowCountLimit,
+      collapsed,
     }),
   )
   const forkTargetIdMap = reuseMap(previous?.forkTargetIdMap, buildForkTargetIdMap(visibleMessageEntries))
@@ -220,11 +222,11 @@ export function buildChatPageViewModel(
   }
 }
 
-export function useChatPageViewModel(messages: Message[], rowCountLimit?: number): ChatPageViewModel {
+export function useChatPageViewModel(messages: Message[], rowCountLimit?: number, collapsed?: boolean): ChatPageViewModel {
   const previousRef = useRef<ChatPageViewModel | undefined>(undefined)
   return useMemo(() => {
-    const viewModel = buildChatPageViewModel(messages, previousRef.current, rowCountLimit)
+    const viewModel = buildChatPageViewModel(messages, previousRef.current, rowCountLimit, collapsed)
     previousRef.current = viewModel
     return viewModel
-  }, [messages, rowCountLimit])
+  }, [messages, rowCountLimit, collapsed])
 }

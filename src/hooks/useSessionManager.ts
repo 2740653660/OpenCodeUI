@@ -21,7 +21,9 @@ import {
 } from '../api'
 import { sessionErrorHandler } from '../utils'
 import { isSessionNotFoundError } from '../utils/sessionErrors'
-import { INITIAL_MESSAGE_LIMIT, HISTORY_LOAD_BATCH_SIZE } from '../constants'
+import { INITIAL_MESSAGE_LIMIT } from '../constants'
+import { PAGE_MESSAGE_COUNT, PAGE_ROW_COUNT_FOR_COLLAPSE } from '../features/chat/chatPageModel'
+import { useTheme } from './useTheme'
 import type { MessageError } from '../types/message'
 
 function toLoadMessageError(error: unknown): MessageError {
@@ -63,6 +65,12 @@ function mergeWithLocalStreamingMessages(
 }
 
 export function useSessionManager({ sessionId, directory, onLoadComplete, onError, onSessionMissing }: UseSessionManagerOptions) {
+  const { processCollapseEnabled } = useTheme()
+  // 过程折叠时按 row 数分页（25 row/页），需要更多消息填满预拉取的最少页数；
+  // 非折叠时按消息数分页（20 条/页）。初始加载至少够 5 页。
+  const effectiveInitialLimit = processCollapseEnabled
+    ? Math.max(INITIAL_MESSAGE_LIMIT, PAGE_ROW_COUNT_FOR_COLLAPSE * 5 * 2)
+    : Math.max(INITIAL_MESSAGE_LIMIT, PAGE_MESSAGE_COUNT * 5)
   const loadSequenceRef = useRef<Map<string, number>>(new Map())
   /** 每个 session 当前已请求的消息 limit（cursor），loadMore 时递增 */
   const cursorRef = useRef<Map<string, number>>(new Map())
@@ -103,7 +111,7 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
         const dir = directoryRef.current
         Promise.all([
           getSession(sid, dir).catch(() => null),
-          getSessionMessages(sid, INITIAL_MESSAGE_LIMIT, dir)
+          getSessionMessages(sid, effectiveInitialLimit, dir)
             .then(messages => ({ ok: true as const, messages }))
             .catch(() => ({ ok: false as const, messages: [] as ApiMessageWithParts[] })),
         ])
@@ -111,11 +119,11 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
             if (isStale()) return
 
             if (messagesResult.ok) {
-              cursorRef.current.set(sid, Math.max(INITIAL_MESSAGE_LIMIT, messagesResult.messages.length))
+              cursorRef.current.set(sid, Math.max(effectiveInitialLimit, messagesResult.messages.length))
             }
 
             messageStore.updateSessionMetadata(sid, {
-              ...(messagesResult.ok ? { hasMoreHistory: messagesResult.messages.length >= INITIAL_MESSAGE_LIMIT } : {}),
+              ...(messagesResult.ok ? { hasMoreHistory: messagesResult.messages.length >= effectiveInitialLimit } : {}),
               directory: sessionInfo?.directory ?? dir ?? '',
               title: sessionInfo?.title,
               shareUrl: sessionInfo?.share?.url,
@@ -136,7 +144,7 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
         // 并行加载 session 信息和消息（传递 directory）
         const [sessionInfo, apiMessages] = await Promise.all([
           getSession(sid, dir).catch(() => null),
-          getSessionMessages(sid, INITIAL_MESSAGE_LIMIT, dir),
+          getSessionMessages(sid, effectiveInitialLimit, dir),
         ])
 
         if (isStale()) return
@@ -155,14 +163,14 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
           // SSE 推送的消息比 API 返回的多，说明有新消息，跳过覆盖
           // 但仍需更新元数据，否则 hasMoreHistory 等状态可能停留在默认值
           messageStore.updateSessionMetadata(sid, {
-            hasMoreHistory: apiMessages.length >= INITIAL_MESSAGE_LIMIT,
+            hasMoreHistory: apiMessages.length >= effectiveInitialLimit,
             directory: sessionInfo?.directory ?? dir ?? '',
             title: sessionInfo?.title,
             loadState: 'loaded',
             shareUrl: sessionInfo?.share?.url,
           })
           onLoadComplete?.()
-          cursorRef.current.set(sid, Math.max(INITIAL_MESSAGE_LIMIT, apiMessages.length))
+          cursorRef.current.set(sid, Math.max(effectiveInitialLimit, apiMessages.length))
           return
         }
 
@@ -172,12 +180,12 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
         messageStore.setMessages(sid, mergedMessages, {
           directory: sessionInfo?.directory ?? dir ?? '',
           title: sessionInfo?.title,
-          hasMoreHistory: apiMessages.length >= INITIAL_MESSAGE_LIMIT,
+          hasMoreHistory: apiMessages.length >= effectiveInitialLimit,
           revertState: sessionInfo?.revert ?? null,
           shareUrl: sessionInfo?.share?.url,
         })
 
-        cursorRef.current.set(sid, Math.max(INITIAL_MESSAGE_LIMIT, apiMessages.length))
+        cursorRef.current.set(sid, Math.max(effectiveInitialLimit, apiMessages.length))
 
         // force 模式（如 SSE 重连）只静默刷新数据，不触发滚动
         if (!force) {
@@ -212,8 +220,12 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
     if (!state) return
 
     const dir = state.directory || directoryRef.current
-    const currentCursor = cursorRef.current.get(sessionId) ?? Math.max(INITIAL_MESSAGE_LIMIT, state.messages.length)
-    const targetCursor = currentCursor + HISTORY_LOAD_BATCH_SIZE
+    const currentCursor = cursorRef.current.get(sessionId) ?? Math.max(effectiveInitialLimit, state.messages.length)
+    // 按页面算批量大小：过程折叠 25 row/页 × 5 页 × 2 倍冗余；非折叠 20 条/页 × 5 页
+    const batchSize = processCollapseEnabled
+      ? PAGE_ROW_COUNT_FOR_COLLAPSE * 5 * 2
+      : PAGE_MESSAGE_COUNT * 5
+    const targetCursor = currentCursor + batchSize
 
     try {
       const apiMessages = await getSessionMessages(sessionId, targetCursor, dir)
@@ -233,7 +245,7 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
     } catch (error) {
       sessionErrorHandler('load more history', error)
     }
-  }, [sessionId])
+  }, [effectiveInitialLimit, processCollapseEnabled, sessionId])
 
   // ============================================
   // Undo
