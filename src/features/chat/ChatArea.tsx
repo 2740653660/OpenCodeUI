@@ -2,8 +2,8 @@
 // ChatArea - 聊天消息显示区域
 // ============================================
 //
-// 这版使用粗颗粒页块级虚拟化：
-// - 消息以 20 条为主分块，渲染重量只限制极端页面
+// 这版使用页块级虚拟化：
+// - 消息以 10 个渲染单元为主分块，渲染重量只限制极端页面
 // - 视口附近少量页保持真实 DOM
 // - 远页折叠成固定高度块，优先使用实测高度，未测量时使用保守估算
 //
@@ -24,54 +24,41 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { animate } from 'motion/mini'
-import {
-  ImmersiveProcessBlock,
-  MessageRenderer,
-  messageHasImmersiveFinal,
-} from '../message'
+import { ImmersiveProcessBlock, MessageRenderer, messageHasImmersiveFinal } from '../message'
 import { MessageErrorView } from '../message/parts'
 import { messageStore } from '../../store'
 import { useTheme } from '../../hooks/useTheme'
 import type { Message, MessageError } from '../../types/message'
 import { RetryStatusInline, type RetryStatusInlineData } from './RetryStatusInline'
-import { buildVisibleMessageEntries, getVisibleMessageForkTargetId } from './chatAreaVisibility'
+import {
+  buildVisibleMessageEntries,
+  findActiveTurnAssistantId,
+  getVisibleMessageForkTargetId,
+} from './chatAreaVisibility'
 import { AT_BOTTOM_THRESHOLD_PX } from '../../constants'
 import { useChatViewport } from './chatViewport'
 import {
   buildContentKeyedChatPages,
-  buildExpandedPageSelection,
   buildPageOffsets,
-  buildPageRenderSegments,
-  computeAnchorRestoreScrollDelta,
+  buildHistoryPrefetchAttemptKey,
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
   buildTurnUserStartMap,
-  computeExpandedPageRange,
-  expandSelectionWithPageKeys,
-  PAGE_ADJACENT_OVERSCAN,
   PAGE_EXTREME_RENDER_WEIGHT,
   PAGE_MESSAGE_COUNT,
   seedMeasuredPageHeightsFromPreviousPages,
+  shouldPrefetchHistory,
   type ChatPage,
   type StableChatPage,
 } from './chatPageModel'
-import { isScrollAnchorLocked } from '../../utils/scrollUtils'
 
 const LOAD_MORE_ROOT_MARGIN = '240px 0px 0px 0px'
-const LOAD_MORE_ANCHOR_CAPTURE_PX = 480
 const LOAD_MORE_WHEEL_COOLDOWN_MS = 90
 const LOAD_MORE_DEFER_MS = 100
-const LOAD_MORE_ANCHOR_SETTLE_MS = 600
-const LOAD_MORE_ANCHOR_FALLBACK_MS = 5000
 const PENDING_SCROLL_TARGET_KEEPALIVE_MS = 900
-const ADJACENT_PAGE_PRELOAD_VIEWPORTS = 12
-
-type LoadMoreAnchorSnapshot = {
-  messageId: string
-  sourceId: string
-  topOffset: number
-  bottomOffset: number
-}
+const PAGE_WINDOW_ROOT_MARGIN_VIEWPORTS = 3
+const PREFETCH_PAGE_RESERVE = 2
+const INITIAL_EXPANDED_PAGE_COUNT = 1
 
 /** Stable no-op to avoid creating a new closure on every render. */
 const NOOP = () => {}
@@ -86,64 +73,6 @@ function pageHasStreamingMessage(page: ChatPage): boolean {
 
 function pageHasUserMessage(page: ChatPage): boolean {
   return page.rows.some(row => row.messages.some(message => message.info.role === 'user'))
-}
-
-function captureLoadMoreAnchor(root: HTMLElement): LoadMoreAnchorSnapshot | null {
-  const rootRect = root.getBoundingClientRect()
-  const candidates = root.querySelectorAll<HTMLElement>('[data-message-id]')
-
-  let best: LoadMoreAnchorSnapshot | null = null
-  let bestVisibleHeight = 0
-  for (const element of candidates) {
-    const messageId = element.getAttribute('data-message-id')
-    if (!messageId) continue
-    const sourceId = element.getAttribute('data-anchor-source-id') || messageId
-
-    const rect = element.getBoundingClientRect()
-    const intersectsViewport = rect.bottom > rootRect.top && rect.top < rootRect.bottom
-    if (!intersectsViewport) continue
-
-    const topOffset = rect.top - rootRect.top
-    const visibleHeight = Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top)
-    if (
-      visibleHeight > bestVisibleHeight ||
-      (visibleHeight === bestVisibleHeight && (!best || topOffset < best.topOffset))
-    ) {
-      best = { messageId, sourceId, topOffset, bottomOffset: rect.bottom - rootRect.top }
-      bestVisibleHeight = visibleHeight
-    }
-  }
-
-  return best
-}
-
-function findLoadMoreAnchorTarget(root: HTMLElement, anchor: LoadMoreAnchorSnapshot): HTMLElement | null {
-  const direct = root.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`)
-  if (direct) return direct
-  for (const element of root.querySelectorAll<HTMLElement>('[data-anchor-source-id]')) {
-    if (element.getAttribute('data-anchor-source-id') === anchor.sourceId) return element
-  }
-  return null
-}
-
-/**
- * 估算过程折叠收起后的 assistant row 高度。
- * 收起后只有 ImmersiveProcessBlock header (~32px) + 壳外 final text。
- */
-function estimateCollapsedAssistantRowHeight(messages: Message[]): number {
-  let total = 24 // padding
-  for (let i = 0; i < messages.length; i++) {
-    if (i > 0) total += 8
-    total += 32 // header
-    // final text：只算非 synthetic 的 text part
-    for (const part of messages[i].parts) {
-      if (part.type === 'text' && !(part as { synthetic?: boolean }).synthetic) {
-        const text = (part as { text: string }).text
-        total += Math.max(40, Math.ceil(text.length / 100) * 20)
-      }
-    }
-  }
-  return total
 }
 
 interface ChatAreaProps {
@@ -195,6 +124,7 @@ export const ChatArea = memo(
         turnUserStartMap: turnUserStartMapProp,
         turnLatestAssistantIds: turnLatestAssistantIdsProp,
         sessionId,
+        isStreaming = false,
         allowStreamingLayoutAnimation = true,
         loadState = 'idle',
         loadError,
@@ -222,32 +152,28 @@ export const ChatArea = memo(
       const loadMoreRef = useRef(onLoadMore)
       const isLoadingRef = useRef(false)
       const [isLoadingMore, setIsLoadingMore] = useState(false)
-      const [scrollOffsetFromBottom, setScrollOffsetFromBottom] = useState(0)
+      const [hasLeftBottom, setHasLeftBottom] = useState(false)
       const [viewportHeight, setViewportHeight] = useState(0)
       const [measuredPageHeights, setMeasuredPageHeights] = useState<Record<string, number>>({})
+      const [observedPageKeys, setObservedPageKeys] = useState<Set<string>>(new Set())
       const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null)
-      const [pendingLoadMoreAnchorSourceId, setPendingLoadMoreAnchorSourceId] = useState<string | null>(null)
-      const pendingLoadMoreAnchorRef = useRef<LoadMoreAnchorSnapshot | null>(null)
-      const loadMoreIntentAnchorRef = useRef<LoadMoreAnchorSnapshot | null>(null)
-      const loadMoreRequestCompletedRef = useRef(false)
-      const pendingLayoutAnchorRef = useRef<LoadMoreAnchorSnapshot | null>(null)
       const pendingLoadMoreTimerRef = useRef<number | null>(null)
-      const pendingAnchorReleaseTimerRef = useRef<number | null>(null)
       const pendingScrollClearTimerRef = useRef<number | null>(null)
-      const pendingAnchorClearRafRef = useRef<number | null>(null)
       const pendingSessionResetRafRef = useRef<number | null>(null)
       const lastScrollRootSizeRef = useRef({ width: 0, height: 0 })
-      const previousActivePagesRef = useRef<{ sessionId?: string | null; pages: StableChatPage[] }>({ pages: [] })
+      const previousActivePagesRef = useRef<{
+        sessionId?: string | null
+        processCollapseEnabled: boolean
+        pages: StableChatPage[]
+      }>({ processCollapseEnabled, pages: [] })
       const settlingScrollMessageIdRef = useRef<string | null>(null)
       const loadMoreRequestIdRef = useRef(0)
-      const loadMorePagesBeforeRef = useRef<StableChatPage[] | null>(null)
       const isMountedRef = useRef(true)
       const topSentinelVisibleRef = useRef(false)
-      const prefetchRoundRef = useRef(0)
-      // loadMore 新增页面的 key，强制预展开让 PageBlock 挂载测量高度
-      const [premeasurePageKeys, setPremeasurePageKeys] = useState<Set<string>>(new Set())
-      const premeasurePageKeysRef = useRef(premeasurePageKeys)
-      premeasurePageKeysRef.current = premeasurePageKeys
+      const prefetchAttemptKeyRef = useRef<string | null>(null)
+      const pageSlotElementsRef = useRef<Map<string, HTMLDivElement>>(new Map())
+      const premeasureCommitRafRef = useRef<number | null>(null)
+      const pendingPremeasureRef = useRef<{ pageKey: string; height: number } | null>(null)
       const lastWheelInputAtRef = useRef(0)
       const tryLoadMoreRef = useRef<() => void>(NOOP)
 
@@ -271,10 +197,17 @@ export const ChatArea = memo(
         () => visibleMessagesProp ?? visibleMessageEntries.map(entry => entry.message),
         [visibleMessageEntries, visibleMessagesProp],
       )
-      const pages = useMemo<StableChatPage[]>(
-        () => (shouldUseExternalViewModel ? [] : buildContentKeyedChatPages(visibleMessages, PAGE_MESSAGE_COUNT, PAGE_EXTREME_RENDER_WEIGHT, PAGE_MESSAGE_COUNT, processCollapseEnabled)),
-        [shouldUseExternalViewModel, visibleMessages, processCollapseEnabled],
-      )
+      const pages = useMemo<StableChatPage[]>(() => {
+        if (shouldUseExternalViewModel) return []
+        const modeKey = processCollapseEnabled ? 'collapsed' : 'standard'
+        return buildContentKeyedChatPages(
+          visibleMessages,
+          PAGE_MESSAGE_COUNT,
+          PAGE_EXTREME_RENDER_WEIGHT,
+          PAGE_MESSAGE_COUNT,
+          processCollapseEnabled,
+        ).map(page => ({ ...page, key: `${modeKey}:${page.key}` }))
+      }, [shouldUseExternalViewModel, visibleMessages, processCollapseEnabled])
       const localForkTargetIdMap = useMemo(
         () =>
           forkTargetIdMapProp ??
@@ -293,32 +226,24 @@ export const ChatArea = memo(
         () => turnLatestAssistantIdsProp ?? buildTurnLatestAssistantIdSet(visibleMessages),
         [turnLatestAssistantIdsProp, visibleMessages],
       )
+      const activeTurnAssistantId = useMemo(
+        () => findActiveTurnAssistantId(visibleMessages, isStreaming),
+        [isStreaming, visibleMessages],
+      )
 
-      const activePages = useMemo(() => {
-        const rawPages = pageRecords ?? pages
-        if (!processCollapseEnabled) return rawPages
-        // 过程折叠收起后，assistant row 实际高度远小于估算（只有 header + final text）。
-        // 虚拟化折叠页面用 estimatedHeight 做偏移；不修正会导致展开时大幅滚动修正。
-        let changed = false
-        const adjusted = rawPages.map(page => {
-          let pageChanged = false
-          const newRows = page.rows.map(row => {
-            if (row.messages[0]?.info.role !== 'assistant') return row
-            pageChanged = true
-            return { ...row, estimatedHeight: estimateCollapsedAssistantRowHeight(row.messages) }
-          })
-          if (!pageChanged) return page
-          changed = true
-          const newEstimatedHeight = newRows.reduce((sum, row) => sum + row.estimatedHeight, 0)
-          return { ...page, rows: newRows, estimatedHeight: newEstimatedHeight }
-        })
-        return changed ? adjusted : rawPages
-      }, [pageRecords, pages, processCollapseEnabled])
+      const activePages = pageRecords ?? pages
 
       useLayoutEffect(() => {
         const previous = previousActivePagesRef.current
-        previousActivePagesRef.current = { sessionId, pages: activePages }
-        if (previous.sessionId !== sessionId || previous.pages.length === 0 || activePages.length === 0) return
+        previousActivePagesRef.current = { sessionId, processCollapseEnabled, pages: activePages }
+        if (
+          previous.sessionId !== sessionId ||
+          previous.processCollapseEnabled !== processCollapseEnabled ||
+          previous.pages.length === 0 ||
+          activePages.length === 0
+        ) {
+          return
+        }
 
         setMeasuredPageHeights(current => {
           const seeded = seedMeasuredPageHeightsFromPreviousPages({
@@ -329,7 +254,7 @@ export const ChatArea = memo(
           if (seeded === current) return current
           return seeded
         })
-      }, [activePages, sessionId])
+      }, [activePages, processCollapseEnabled, sessionId])
 
       const pendingTargetPageIndex = useMemo(
         () =>
@@ -337,38 +262,6 @@ export const ChatArea = memo(
             ? -1
             : activePages.findIndex(page => page.messageIds.includes(pendingScrollMessageId)),
         [activePages, pendingScrollMessageId],
-      )
-
-      const pendingLoadMoreAnchorPageIndex = useMemo(
-        () =>
-          pendingLoadMoreAnchorSourceId == null
-            ? -1
-            : activePages.findIndex(page =>
-                page.messageIds.some(
-                  messageId => (localForkTargetIdMap.get(messageId) ?? messageId) === pendingLoadMoreAnchorSourceId,
-                ),
-              ),
-        [activePages, localForkTargetIdMap, pendingLoadMoreAnchorSourceId],
-      )
-
-      const expandedPageRange = useMemo(
-        () =>
-          computeExpandedPageRange({
-            pages: activePages,
-            measuredPageHeights,
-            scrollOffsetFromBottom,
-            viewportHeight,
-            // 过程折叠收起后页面很矮，滚动快时 1 页 overscan 来不及预展开 → 跳变。
-            // 增大到 3 页，让更多页面提前测量，滚动时高度已就绪。
-            adjacentPageCount: processCollapseEnabled ? 3 : PAGE_ADJACENT_OVERSCAN,
-            adjacentPageMaxSourceHeight: viewportHeight * ADJACENT_PAGE_PRELOAD_VIEWPORTS,
-          }),
-        [activePages, measuredPageHeights, processCollapseEnabled, scrollOffsetFromBottom, viewportHeight],
-      )
-
-      const expandedPageSelection = useMemo(
-        () => buildExpandedPageSelection(expandedPageRange, [pendingTargetPageIndex, pendingLoadMoreAnchorPageIndex]),
-        [expandedPageRange, pendingLoadMoreAnchorPageIndex, pendingTargetPageIndex],
       )
 
       const streamingPageKeys = useMemo(() => {
@@ -379,42 +272,107 @@ export const ChatArea = memo(
         return keys
       }, [activePages])
 
-      const knownPageKeysRef = useRef<Set<string>>(new Set())
-      const renderPageSelection = useMemo(() => {
-        // 同步检测新页面（不依赖 effect），立即加入预展开集合
-        // 避免 loadMore 新页面先 collapsed 渲染一帧再展开 → 闪
-        const known = knownPageKeysRef.current
-        const newKeys = new Set<string>()
-        for (const page of activePages) {
-          if (!known.has(page.key)) {
-            newKeys.add(page.key)
-          }
-        }
-        if (newKeys.size > 0) {
-          knownPageKeysRef.current = new Set([...known, ...newKeys])
-          setPremeasurePageKeys(prev => {
-            const next = new Set(prev)
-            for (const k of newKeys) next.add(k)
-            return next
-          })
-        }
-        const allKeys = new Set([...streamingPageKeys, ...premeasurePageKeys, ...newKeys])
-        return expandSelectionWithPageKeys({
-          pages: activePages,
-          expandedPageSelection,
-          pageKeys: allKeys,
-        })
-      }, [activePages, expandedPageSelection, premeasurePageKeys, streamingPageKeys])
+      const registerPageSlot = useCallback((pageKey: string, node: HTMLDivElement | null) => {
+        if (node) pageSlotElementsRef.current.set(pageKey, node)
+        else pageSlotElementsRef.current.delete(pageKey)
+      }, [])
 
-      const renderSegments = useMemo(
-        () =>
-          buildPageRenderSegments({
-            pages: activePages,
-            expandedPageSelection: renderPageSelection,
-            measuredPageHeights,
-          }),
-        [activePages, measuredPageHeights, renderPageSelection],
-      )
+      const pageKeySignature = useMemo(() => activePages.map(page => page.key).join('\u0000'), [activePages])
+      useEffect(() => {
+        const root = scrollRoot
+        if (!root || typeof IntersectionObserver === 'undefined') return
+
+        const activePageKeys = new Set(pageKeySignature ? pageKeySignature.split('\u0000') : [])
+        const rootMargin = Math.max(1, viewportHeight || root.clientHeight) * PAGE_WINDOW_ROOT_MARGIN_VIEWPORTS
+        const pageDistances = new Map<string, number>()
+        const observer = new IntersectionObserver(
+          entries => {
+            for (const entry of entries) {
+              const pageKey = (entry.target as HTMLElement).dataset.pageKey
+              if (!pageKey) continue
+              if (!entry.isIntersecting) {
+                pageDistances.delete(pageKey)
+                continue
+              }
+              const rootBounds = entry.rootBounds
+              const distance = !rootBounds
+                ? 0
+                : entry.boundingClientRect.bottom < rootBounds.top
+                  ? rootBounds.top - entry.boundingClientRect.bottom
+                  : entry.boundingClientRect.top > rootBounds.bottom
+                    ? entry.boundingClientRect.top - rootBounds.bottom
+                    : 0
+              pageDistances.set(pageKey, distance)
+            }
+
+            setObservedPageKeys(previous => {
+              const next = new Set(
+                [...pageDistances.entries()]
+                  .filter(([key]) => activePageKeys.has(key))
+                  .sort((a, b) => a[1] - b[1])
+                  .map(([key]) => key),
+              )
+              if (next.size === previous.size && [...next].every(key => previous.has(key))) return previous
+              return next
+            })
+          },
+          { root, rootMargin: `${rootMargin}px 0px ${rootMargin}px 0px` },
+        )
+
+        for (const element of pageSlotElementsRef.current.values()) observer.observe(element)
+        return () => observer.disconnect()
+      }, [pageKeySignature, scrollRoot, viewportHeight])
+
+      const expandedPageKeys = useMemo(() => {
+        const activeKeys = new Set(activePages.map(page => page.key))
+        const keys = new Set<string>()
+        for (let index = 0; index < Math.min(INITIAL_EXPANDED_PAGE_COUNT, activePages.length); index += 1) {
+          keys.add(activePages[index].key)
+        }
+        for (const key of observedPageKeys) {
+          if (activeKeys.has(key) && measuredPageHeights[key] != null) keys.add(key)
+        }
+        for (const key of streamingPageKeys) keys.add(key)
+        if (
+          pendingTargetPageIndex >= 0 &&
+          measuredPageHeights[activePages[pendingTargetPageIndex].key] != null
+        ) {
+          keys.add(activePages[pendingTargetPageIndex].key)
+        }
+        return keys
+      }, [
+        activePages,
+        measuredPageHeights,
+        observedPageKeys,
+        pendingTargetPageIndex,
+        streamingPageKeys,
+      ])
+
+      const premeasurePage = useMemo(() => {
+        const pendingTargetPage = pendingTargetPageIndex >= 0 ? activePages[pendingTargetPageIndex] : null
+        if (pendingTargetPage && measuredPageHeights[pendingTargetPage.key] == null) return pendingTargetPage
+        for (const pageKey of observedPageKeys) {
+          if (measuredPageHeights[pageKey] != null || streamingPageKeys.has(pageKey)) continue
+          const page = activePages.find(candidate => candidate.key === pageKey)
+          if (page) return page
+        }
+        return null
+      }, [activePages, measuredPageHeights, observedPageKeys, pendingTargetPageIndex, streamingPageKeys])
+
+      const expandedPageRange = useMemo(() => {
+        let startIndex = Number.POSITIVE_INFINITY
+        let endIndex = -1
+        for (let index = 0; index < activePages.length; index += 1) {
+          const pageKey = activePages[index].key
+          if (!expandedPageKeys.has(pageKey) && !observedPageKeys.has(pageKey)) continue
+          startIndex = Math.min(startIndex, index)
+          endIndex = index
+        }
+        return {
+          startIndex: Number.isFinite(startIndex) ? startIndex : 0,
+          endIndex,
+        }
+      }, [activePages, expandedPageKeys, observedPageKeys])
 
       const clearPendingLoadMoreTimer = useCallback(() => {
         if (pendingLoadMoreTimerRef.current === null) return
@@ -428,46 +386,14 @@ export const ChatArea = memo(
         pendingScrollClearTimerRef.current = null
       }, [])
 
-      const clearPendingAnchorReleaseTimer = useCallback(() => {
-        if (pendingAnchorReleaseTimerRef.current === null) return
-        window.clearTimeout(pendingAnchorReleaseTimerRef.current)
-        pendingAnchorReleaseTimerRef.current = null
-      }, [])
-
-      const clearPendingLoadMoreAnchorMessage = useCallback(() => {
-        if (pendingAnchorClearRafRef.current !== null) cancelAnimationFrame(pendingAnchorClearRafRef.current)
-        pendingAnchorClearRafRef.current = requestAnimationFrame(() => {
-          pendingAnchorClearRafRef.current = null
-          setPendingLoadMoreAnchorSourceId(null)
-        })
-      }, [])
-
-      const releasePendingLoadMoreAnchor = useCallback(() => {
-        clearPendingAnchorReleaseTimer()
-        pendingLoadMoreAnchorRef.current = null
-        loadMoreRequestCompletedRef.current = false
-        clearPendingLoadMoreAnchorMessage()
-      }, [clearPendingAnchorReleaseTimer, clearPendingLoadMoreAnchorMessage])
-
-      const schedulePendingLoadMoreAnchorRelease = useCallback(
-        (delay: number) => {
-          clearPendingAnchorReleaseTimer()
-          pendingAnchorReleaseTimerRef.current = window.setTimeout(() => {
-            pendingAnchorReleaseTimerRef.current = null
-            pendingLoadMoreAnchorRef.current = null
-            loadMoreRequestCompletedRef.current = false
-            clearPendingLoadMoreAnchorMessage()
-          }, delay)
-        },
-        [clearPendingAnchorReleaseTimer, clearPendingLoadMoreAnchorMessage],
-      )
-
       const resetSessionViewState = useCallback(() => {
         if (pendingSessionResetRafRef.current !== null) cancelAnimationFrame(pendingSessionResetRafRef.current)
         pendingSessionResetRafRef.current = requestAnimationFrame(() => {
           pendingSessionResetRafRef.current = null
           setIsLoadingMore(false)
           setMeasuredPageHeights({})
+          setObservedPageKeys(new Set())
+          setHasLeftBottom(false)
           setPendingScrollMessageId(null)
         })
       }, [])
@@ -479,26 +405,13 @@ export const ChatArea = memo(
           loadMoreRequestIdRef.current += 1
           clearPendingLoadMoreTimer()
           clearPendingScrollTimer()
-          clearPendingAnchorReleaseTimer()
-          if (pendingAnchorClearRafRef.current !== null) cancelAnimationFrame(pendingAnchorClearRafRef.current)
           if (pendingSessionResetRafRef.current !== null) cancelAnimationFrame(pendingSessionResetRafRef.current)
         }
-      }, [clearPendingAnchorReleaseTimer, clearPendingLoadMoreTimer, clearPendingScrollTimer])
+      }, [clearPendingLoadMoreTimer, clearPendingScrollTimer])
 
       const setScrollContainerRef = useCallback((node: HTMLDivElement | null) => {
         scrollRef.current = node
         setScrollRoot(prev => (prev === node ? prev : node))
-      }, [])
-
-      const updateScrollOffsetSnapshot = useCallback(() => {
-        const root = scrollRef.current
-        if (!root) return
-
-        const nextOffset = Math.abs(root.scrollTop)
-        setScrollOffsetFromBottom(prev => {
-          if (Math.abs(nextOffset - prev) < 1) return prev
-          return nextOffset
-        })
       }, [])
 
       useEffect(() => {
@@ -531,40 +444,21 @@ export const ChatArea = memo(
         const onScroll = () => {
           const hasOverflow = root.scrollHeight > root.clientHeight + 1
           const distFromBottom = Math.abs(root.scrollTop)
-          const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - distFromBottom)
           const atBottom = !hasOverflow || distFromBottom <= atBottomThreshold
           const previous = isAtBottomRef.current
           isAtBottomRef.current = atBottom
           if (previous !== atBottom) onAtBottomChange?.(atBottom)
-
-          if (
-            loadMoreIntentAnchorRef.current === null &&
-            Date.now() - lastWheelInputAtRef.current < LOAD_MORE_WHEEL_COOLDOWN_MS + LOAD_MORE_DEFER_MS &&
-            distFromTop <= LOAD_MORE_ANCHOR_CAPTURE_PX
-          ) {
-            loadMoreIntentAnchorRef.current = captureLoadMoreAnchor(root)
-          }
-
-          updateScrollOffsetSnapshot()
+          if (previous && !atBottom) setHasLeftBottom(true)
         }
 
         const onOlderScrollIntent = () => {
           lastWheelInputAtRef.current = Date.now()
-          if (pendingLoadMoreAnchorRef.current && !isLoadingRef.current) {
-            releasePendingLoadMoreAnchor()
-          }
-          const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop))
-          loadMoreIntentAnchorRef.current = distFromTop <= 1 ? captureLoadMoreAnchor(root) : null
           loadMoreBlockedRef.current = false
           tryLoadMoreRef.current()
         }
 
         const onWheel = (event: WheelEvent) => {
-          if (event.deltaY > 0) {
-            releasePendingLoadMoreAnchor()
-            return
-          }
-          onOlderScrollIntent()
+          if (event.deltaY < 0) onOlderScrollIntent()
         }
 
         const onKeyDown = (event: KeyboardEvent) => {
@@ -582,8 +476,6 @@ export const ChatArea = memo(
           }
           if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') {
             onOlderScrollIntent()
-          } else if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === 'End') {
-            releasePendingLoadMoreAnchor()
           }
         }
 
@@ -600,7 +492,6 @@ export const ChatArea = memo(
           touchStartOffset = null
           const nextOffset = Math.abs(root.scrollTop)
           if (nextOffset > startOffset + 1) onOlderScrollIntent()
-          else if (nextOffset < startOffset - 1) releasePendingLoadMoreAnchor()
           else if (root.scrollHeight - root.clientHeight - nextOffset <= 1) onOlderScrollIntent()
         }
 
@@ -615,7 +506,6 @@ export const ChatArea = memo(
           scrollbarStartOffset = null
           const nextOffset = Math.abs(root.scrollTop)
           if (nextOffset > startOffset + 1) onOlderScrollIntent()
-          else if (nextOffset < startOffset - 1) releasePendingLoadMoreAnchor()
         }
 
         root.addEventListener('scroll', onScroll, { passive: true })
@@ -625,7 +515,6 @@ export const ChatArea = memo(
         root.addEventListener('pointerdown', onPointerDown, { passive: true })
         window.addEventListener('pointerup', onPointerUp, { passive: true })
         window.addEventListener('keydown', onKeyDown)
-        updateScrollOffsetSnapshot()
         return () => {
           root.removeEventListener('scroll', onScroll)
           root.removeEventListener('wheel', onWheel)
@@ -635,7 +524,7 @@ export const ChatArea = memo(
           window.removeEventListener('pointerup', onPointerUp)
           window.removeEventListener('keydown', onKeyDown)
         }
-      }, [atBottomThreshold, onAtBottomChange, releasePendingLoadMoreAnchor, updateScrollOffsetSnapshot])
+      }, [atBottomThreshold, onAtBottomChange])
 
       const prevSessionIdRef = useRef(sessionId)
       useEffect(() => {
@@ -643,20 +532,13 @@ export const ChatArea = memo(
         prevSessionIdRef.current = sessionId
         isAtBottomRef.current = true
         loadMoreBlockedRef.current = true
-        pendingLoadMoreAnchorRef.current = null
-        loadMoreIntentAnchorRef.current = null
-        loadMoreRequestCompletedRef.current = false
-        loadMorePagesBeforeRef.current = null
-        previousActivePagesRef.current = { sessionId, pages: [] }
-        clearPendingLoadMoreAnchorMessage()
+        previousActivePagesRef.current = { sessionId, processCollapseEnabled, pages: [] }
         topSentinelVisibleRef.current = false
         loadMoreRequestIdRef.current += 1
-        prefetchRoundRef.current = 0
-        setPremeasurePageKeys(new Set())
-        knownPageKeysRef.current = new Set()
+        prefetchAttemptKeyRef.current = null
+        setObservedPageKeys(new Set())
         isLoadingRef.current = false
         clearPendingLoadMoreTimer()
-        clearPendingAnchorReleaseTimer()
         settlingScrollMessageIdRef.current = null
         clearPendingScrollTimer()
         resetSessionViewState()
@@ -667,19 +549,16 @@ export const ChatArea = memo(
           const root = scrollRef.current
           if (!root) return
           root.scrollTop = 0
-          updateScrollOffsetSnapshot()
           animate(root, { opacity: [0, 1] }, { duration: 0.2, ease: 'easeOut' })
         })
       }, [
         clearPendingLoadMoreTimer,
-        clearPendingLoadMoreAnchorMessage,
         clearPendingScrollTimer,
-        clearPendingAnchorReleaseTimer,
         onAtBottomChange,
         onVisibleMessageIdsChange,
+        processCollapseEnabled,
         resetSessionViewState,
         sessionId,
-        updateScrollOffsetSnapshot,
         visibleMessages,
       ])
 
@@ -689,20 +568,14 @@ export const ChatArea = memo(
           const root = scrollRef.current
           if (root && isAtBottomRef.current) {
             root.scrollTop = 0
-            updateScrollOffsetSnapshot()
           }
         })
-      }, [loadState, updateScrollOffsetSnapshot])
+      }, [loadState])
 
       const tryLoadMore = useCallback(() => {
         if (isLoadingRef.current) return
         if (!topSentinelVisibleRef.current) return
         if (loadMoreBlockedRef.current) return
-
-        const root = scrollRef.current
-        if (!root) return
-        const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop))
-        if (distFromTop > LOAD_MORE_ANCHOR_CAPTURE_PX) return
 
         const fn = loadMoreRef.current
         if (!fn) return
@@ -722,87 +595,68 @@ export const ChatArea = memo(
           return
         }
 
-        clearPendingAnchorReleaseTimer()
-        const anchor = loadMoreIntentAnchorRef.current ?? captureLoadMoreAnchor(root)
-        loadMoreIntentAnchorRef.current = null
-        pendingLoadMoreAnchorRef.current = anchor
-        loadMorePagesBeforeRef.current = activePages
-        if (pendingAnchorClearRafRef.current !== null) {
-          cancelAnimationFrame(pendingAnchorClearRafRef.current)
-          pendingAnchorClearRafRef.current = null
-        }
-        setPendingLoadMoreAnchorSourceId(anchor?.sourceId ?? null)
-
         loadMoreBlockedRef.current = true
-        loadMoreRequestCompletedRef.current = false
         const requestId = ++loadMoreRequestIdRef.current
         const requestSessionId = sid
         isLoadingRef.current = true
         setIsLoadingMore(true)
-        Promise.resolve(fn()).finally(() => {
-          if (!isMountedRef.current || loadMoreRequestIdRef.current !== requestId || sessionId !== requestSessionId) {
-            return
-          }
-          isLoadingRef.current = false
-          setIsLoadingMore(false)
-          if (!pendingLoadMoreAnchorRef.current) {
-            loadMoreRequestCompletedRef.current = false
-            return
-          }
-          loadMoreRequestCompletedRef.current = true
-          schedulePendingLoadMoreAnchorRelease(LOAD_MORE_ANCHOR_FALLBACK_MS)
-        })
-      }, [
-        activePages,
-        clearPendingAnchorReleaseTimer,
-        clearPendingLoadMoreTimer,
-        schedulePendingLoadMoreAnchorRelease,
-        sessionId,
-      ])
+        Promise.resolve(fn())
+          .catch(() => undefined)
+          .finally(() => {
+            if (!isMountedRef.current || loadMoreRequestIdRef.current !== requestId || sessionId !== requestSessionId) {
+              return
+            }
+            isLoadingRef.current = false
+            setIsLoadingMore(false)
+          })
+      }, [clearPendingLoadMoreTimer, sessionId])
 
       useEffect(() => {
         tryLoadMoreRef.current = tryLoadMore
       }, [tryLoadMore])
 
-      // 预拉取：不等触顶，剩余可滚动距离不足时提前拉取更多历史，
-      // 配合 premeasurePageKeys 让新页面在视口外就预测量好高度。
-      // 不经过 tryLoadMore 的守卫（sentinel/capture/block），直接触发加载。
-      const prefetchLoadMoreRef = useRef<() => void>(() => {})
-      const activePagesRef = useRef(activePages)
-      activePagesRef.current = activePages
-      prefetchLoadMoreRef.current = async () => {
+      const prefetchLoadMore = useCallback(async () => {
         if (isLoadingRef.current) return
         const fn = loadMoreRef.current
         const sid = sessionId
         if (!sid || !fn) return
         const hasMore = messageStore.getSessionState(sid)?.hasMoreHistory ?? false
         if (!hasMore) return
-        loadMorePagesBeforeRef.current = activePagesRef.current
         isLoadingRef.current = true
         setIsLoadingMore(true)
         const requestId = ++loadMoreRequestIdRef.current
         const requestSessionId = sid
         try {
           await fn()
+        } catch {
+          // The page-version guard prevents retries until pages or scroll range change.
         } finally {
           if (isMountedRef.current && loadMoreRequestIdRef.current === requestId && sessionId === requestSessionId) {
             isLoadingRef.current = false
             setIsLoadingMore(false)
           }
         }
-      }
+      }, [sessionId])
 
       useEffect(() => {
         if (!hasMoreHistory || loadState !== 'loaded' || isLoadingMore) return
-        const root = scrollRef.current
-        if (!root) return
-        const remainingToTop = root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop)
-        // 剩余不足 8 倍视口高度就预拉取（约 3-4 页），给预测量留足时间
-        const prefetchThreshold = Math.max(1, viewportHeight) * 8
-        if (remainingToTop > prefetchThreshold) return
-        prefetchRoundRef.current += 1
-        prefetchLoadMoreRef.current()
-      }, [hasMoreHistory, isLoadingMore, loadState, scrollOffsetFromBottom, viewportHeight])
+        if (!hasLeftBottom) return
+        if (!shouldPrefetchHistory(activePages.length, expandedPageRange.endIndex, PREFETCH_PAGE_RESERVE)) return
+
+        const attemptKey = buildHistoryPrefetchAttemptKey(sessionId, activePages)
+        if (prefetchAttemptKeyRef.current === attemptKey) return
+        prefetchAttemptKeyRef.current = attemptKey
+        void prefetchLoadMore()
+      }, [
+        activePages,
+        expandedPageRange.endIndex,
+        hasMoreHistory,
+        isLoadingMore,
+        loadState,
+        prefetchLoadMore,
+        hasLeftBottom,
+        sessionId,
+      ])
 
       useEffect(() => {
         const sentinel = topSentinelRef.current
@@ -828,50 +682,6 @@ export const ChatArea = memo(
           clearPendingLoadMoreTimer()
         }
       }, [clearPendingLoadMoreTimer, tryLoadMore, visibleMessages])
-
-      useLayoutEffect(() => {
-        const anchor = pendingLoadMoreAnchorRef.current
-        const root = scrollRef.current
-        if (!anchor || !root) return
-        const target = findLoadMoreAnchorTarget(root, anchor)
-        if (!target) return
-
-        const rootRect = root.getBoundingClientRect()
-        const nextBottomOffset = target.getBoundingClientRect().bottom - rootRect.top
-        const delta = computeAnchorRestoreScrollDelta(anchor.bottomOffset, nextBottomOffset)
-        if (Math.abs(delta) >= 1) {
-          root.scrollTop += delta
-          updateScrollOffsetSnapshot()
-        }
-        if (loadMoreRequestCompletedRef.current && activePages !== loadMorePagesBeforeRef.current) {
-          schedulePendingLoadMoreAnchorRelease(LOAD_MORE_ANCHOR_SETTLE_MS)
-        }
-      }, [
-        activePages,
-        isLoadingMore,
-        measuredPageHeights,
-        renderSegments,
-        schedulePendingLoadMoreAnchorRelease,
-        updateScrollOffsetSnapshot,
-      ])
-
-      useLayoutEffect(() => {
-        const anchor = pendingLayoutAnchorRef.current
-        const root = scrollRef.current
-        if (!anchor || !root) return
-
-        const target = root.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`)
-        pendingLayoutAnchorRef.current = null
-        if (!target) return
-
-        const rootRect = root.getBoundingClientRect()
-        const nextTopOffset = target.getBoundingClientRect().top - rootRect.top
-        const delta = computeAnchorRestoreScrollDelta(anchor.topOffset, nextTopOffset)
-        if (Math.abs(delta) >= 1) {
-          root.scrollTop += delta
-          updateScrollOffsetSnapshot()
-        }
-      }, [activePages, measuredPageHeights, renderSegments, updateScrollOffsetSnapshot])
 
       const onVisibleIdsChangeRef = useRef(onVisibleMessageIdsChange)
       useEffect(() => {
@@ -935,43 +745,13 @@ export const ChatArea = memo(
 
       const updateMeasuredPageHeight = useCallback((pageKey: string, nextHeight: number) => {
         if (nextHeight <= 0) return
-        let shouldUpdate = false
-        let shouldSetAnchor = false
         setMeasuredPageHeights(previous => {
           const current = previous[pageKey] ?? null
           if (current !== null && Math.abs(current - nextHeight) < PAGE_HEIGHT_MEASURE_MIN_DELTA_PX) {
             return previous
           }
-          shouldUpdate = true
-          const root = scrollRef.current
-          // 只在「已测量页面高度变化」（流式增长、折叠收起）才设锚点补偿。
-          // 首次测量不设（虚拟化预展开/loadMore 预测量）。
-          // loadMore 期间不设（DOM 重排中锚点位置不稳定，修正方向可能错误 → 拉到底部）。
-          if (
-            root &&
-            current !== null &&
-            !isAtBottomRef.current &&
-            !isScrollAnchorLocked() &&
-            !isLoadingRef.current &&
-            premeasurePageKeysRef.current.size === 0
-          ) {
-            shouldSetAnchor = true
-          }
-          const next = { ...previous, [pageKey]: nextHeight }
-          return next
+          return { ...previous, [pageKey]: nextHeight }
         })
-        // 副作用在 updater 外执行，避免嵌套 setState
-        if (shouldSetAnchor && scrollRef.current) {
-          pendingLayoutAnchorRef.current = captureLoadMoreAnchor(scrollRef.current)
-        }
-        if (shouldUpdate && premeasurePageKeysRef.current.has(pageKey)) {
-          setPremeasurePageKeys(prev => {
-            if (!prev.has(pageKey)) return prev
-            const next = new Set(prev)
-            next.delete(pageKey)
-            return next
-          })
-        }
       }, [])
 
       const requestScrollToMessage = useCallback(
@@ -990,12 +770,11 @@ export const ChatArea = memo(
 
           const pageOffsets = buildPageOffsets(activePages, measuredPageHeights)
           root.scrollTo({ top: -pageOffsets[targetPageIndex], behavior: behavior === 'smooth' ? 'auto' : behavior })
-          updateScrollOffsetSnapshot()
           settlingScrollMessageIdRef.current = null
           clearPendingScrollTimer()
           setPendingScrollMessageId(messageId)
         },
-        [activePages, clearPendingScrollTimer, measuredPageHeights, updateScrollOffsetSnapshot],
+        [activePages, clearPendingScrollTimer, measuredPageHeights],
       )
 
       useImperativeHandle(
@@ -1084,11 +863,14 @@ export const ChatArea = memo(
               </div>
             )}
 
-            {renderSegments.map(segment =>
-              segment.kind === 'expanded' ? (
-                <PageBlock
-                  key={segment.key}
-                  page={segment.page}
+            {activePages.map(page => (
+              <PageBlock
+                  key={page.key}
+                  page={page}
+                  expanded={expandedPageKeys.has(page.key)}
+                  collapsedHeight={measuredPageHeights[page.key] ?? page.estimatedHeight}
+                  registerPageSlot={registerPageSlot}
+                  processCollapseEnabled={processCollapseEnabled}
                   messageMaxWidthClass={messageMaxWidthClass}
                   messagePaddingClass={messagePaddingClass}
                   registerMessage={registerMessage}
@@ -1098,17 +880,15 @@ export const ChatArea = memo(
                   turnDurationMap={localTurnDurationMap}
                   turnUserStartMap={localTurnUserStartMap}
                   turnLatestAssistantIds={localTurnLatestAssistantIds}
+                  activeTurnAssistantId={activeTurnAssistantId}
                   forkTargetIdMap={localForkTargetIdMap}
                   allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
                   onMeasuredHeightChange={updateMeasuredPageHeight}
                 />
-              ) : (
-                <CollapsedPagesBlock key={segment.key} height={segment.height} />
-              ),
-            )}
+            ))}
 
             {visibleMessages.length > 0 && isLoadingMore && (
-              <div className="flex justify-center py-3 shrink-0">
+              <div className="flex justify-center py-3 shrink-0" style={{ overflowAnchor: 'none' }}>
                 <div className="flex items-center gap-2 text-text-400 text-[length:var(--fs-sm)]">
                   <span className="w-3.5 h-3.5 border-2 border-text-400/30 border-t-text-400 rounded-full animate-spin" />
                   {t('chatArea.loadingHistory')}
@@ -1116,8 +896,13 @@ export const ChatArea = memo(
               </div>
             )}
 
-            <div className="mobile-chat-top-spacer shrink-0" />
-            <div ref={topSentinelRef} className="h-px shrink-0" aria-hidden="true" />
+            <div className="mobile-chat-top-spacer shrink-0" style={{ overflowAnchor: 'none' }} />
+            <div
+              ref={topSentinelRef}
+              className="h-px shrink-0"
+              style={{ overflowAnchor: 'none' }}
+              aria-hidden="true"
+            />
           </div>
         </div>
       )
@@ -1127,6 +912,10 @@ export const ChatArea = memo(
 
 interface PageBlockProps {
   page: ChatPage
+  expanded: boolean
+  collapsedHeight: number
+  registerPageSlot: (pageKey: string, node: HTMLDivElement | null) => void
+  processCollapseEnabled: boolean
   messageMaxWidthClass: string
   messagePaddingClass: string
   registerMessage?: (id: string, element: HTMLElement | null) => void
@@ -1136,6 +925,7 @@ interface PageBlockProps {
   turnDurationMap: Map<string, number>
   turnUserStartMap: Map<string, number>
   turnLatestAssistantIds: Set<string>
+  activeTurnAssistantId: string | null
   forkTargetIdMap: Map<string, string | undefined>
   allowStreamingLayoutAnimation: boolean
   onMeasuredHeightChange: (pageKey: string, nextHeight: number) => void
@@ -1161,6 +951,10 @@ function pageMessageDerivedValuesEqual(previous: PageDerivedValueProps, next: Pa
 }
 
 export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlockProps) {
+  if (previous.expanded !== next.expanded) return false
+  if (previous.registerPageSlot !== next.registerPageSlot) return false
+  if (!next.expanded) return previous.collapsedHeight === next.collapsedHeight
+  if (previous.processCollapseEnabled !== next.processCollapseEnabled) return false
   if (previous.page !== next.page) return false
   if (previous.messageMaxWidthClass !== next.messageMaxWidthClass) return false
   if (previous.messagePaddingClass !== next.messagePaddingClass) return false
@@ -1175,6 +969,13 @@ export function arePageBlockPropsEqual(previous: PageBlockProps, next: PageBlock
     return false
   }
   if (previous.onMeasuredHeightChange !== next.onMeasuredHeightChange) return false
+  if (
+    previous.activeTurnAssistantId !== next.activeTurnAssistantId &&
+    ((previous.activeTurnAssistantId != null && previous.page.messageIds.includes(previous.activeTurnAssistantId)) ||
+      (next.activeTurnAssistantId != null && next.page.messageIds.includes(next.activeTurnAssistantId)))
+  ) {
+    return false
+  }
   return pageMessageDerivedValuesEqual(previous, next)
 }
 
@@ -1184,10 +985,20 @@ const PAGE_HEIGHT_MEASURE_MIN_DELTA_PX = 4
 function usePageHeightMeasurement(
   pageKey: string,
   onMeasuredHeightChange: (pageKey: string, nextHeight: number) => void,
+  enabled: boolean,
+  registerPageSlot: (pageKey: string, node: HTMLDivElement | null) => void,
 ) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const lastReportedHeightRef = useRef(0)
   const measureRafRef = useRef<number | null>(null)
+
+  const setWrapperRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      wrapperRef.current = node
+      registerPageSlot(pageKey, node)
+    },
+    [pageKey, registerPageSlot],
+  )
 
   const flushMeasure = useCallback(() => {
     measureRafRef.current = null
@@ -1208,6 +1019,7 @@ function usePageHeightMeasurement(
   }, [flushMeasure])
 
   useLayoutEffect(() => {
+    if (!enabled) return
     // 布局变化后立刻量一次（不节流阈值，保证虚拟化高度不过期）
     const element = wrapperRef.current
     if (!element) return
@@ -1215,11 +1027,11 @@ function usePageHeightMeasurement(
     if (nextHeight <= 0) return
     lastReportedHeightRef.current = nextHeight
     onMeasuredHeightChange(pageKey, nextHeight)
-  }, [onMeasuredHeightChange, pageKey])
+  }, [enabled, onMeasuredHeightChange, pageKey])
 
   useEffect(() => {
     const element = wrapperRef.current
-    if (!element || typeof ResizeObserver === 'undefined') return
+    if (!enabled || !element || typeof ResizeObserver === 'undefined') return
 
     const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(element)
@@ -1230,13 +1042,17 @@ function usePageHeightMeasurement(
         measureRafRef.current = null
       }
     }
-  }, [scheduleMeasure])
+  }, [enabled, scheduleMeasure])
 
-  return wrapperRef
+  return setWrapperRef
 }
 
 const PageBlock = memo(function PageBlock({
   page,
+  expanded,
+  collapsedHeight,
+  registerPageSlot,
+  processCollapseEnabled,
   messageMaxWidthClass,
   messagePaddingClass,
   registerMessage,
@@ -1246,17 +1062,30 @@ const PageBlock = memo(function PageBlock({
   turnDurationMap,
   turnUserStartMap,
   turnLatestAssistantIds,
+  activeTurnAssistantId,
   forkTargetIdMap,
   allowStreamingLayoutAnimation,
   onMeasuredHeightChange,
 }: PageBlockProps) {
-  const wrapperRef = usePageHeightMeasurement(page.key, onMeasuredHeightChange)
-  const { processCollapseEnabled } = useTheme()
+  const wrapperRef = usePageHeightMeasurement(
+    page.key,
+    onMeasuredHeightChange,
+    expanded,
+    registerPageSlot,
+  )
+  if (!expanded) {
+    return (
+      <div
+        ref={wrapperRef}
+        className="shrink-0"
+        data-page-key={page.key}
+        style={{ height: `${collapsedHeight}px`, overflowAnchor: 'none' }}
+        aria-hidden="true"
+      />
+    )
+  }
 
-  const renderMessage = (
-    message: Message,
-    immersiveContentScope?: 'all' | 'process' | 'final' | 'inline',
-  ) => (
+  const renderMessage = (message: Message, immersiveContentScope?: 'all' | 'process' | 'final' | 'inline') => (
     <RenderedMessageItem
       key={`${message.info.id}:${immersiveContentScope ?? 'all'}`}
       messageId={message.info.id}
@@ -1338,19 +1167,20 @@ const PageBlock = memo(function PageBlock({
           // 必须先查 isStreaming：buildVisibleMessageEntries 合并连续 assistant 后，
           // info.time.completed 是第一条的，但 isStreaming 是 anyStreaming。
           // 若只查 completed==null，合并消息 completed!=null 会被误判为已结束。
-          const rowIsActive = assistants.some(m => {
-            if (m.isStreaming) return true
-            if (m.info.time.completed == null) return true
-            return m.parts.some(
-              p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
-            )
-          })
+          const rowIsActive =
+            finalAssistantId === activeTurnAssistantId ||
+            assistants.some(m => {
+              if (m.isStreaming) return true
+              if (m.info.time.completed == null) return true
+              return m.parts.some(
+                p => p.type === 'tool' && (p.state.status === 'running' || p.state.status === 'pending'),
+              )
+            })
 
           const finalHasAnswer = messageHasImmersiveFinal(finalAssistant)
 
           // 计时起点：优先 turnUserStartMap，否则取 row 首条 assistant 的 created
-          const userStart =
-            turnUserStartMap.get(finalAssistantId) ?? assistants[0]?.info.time.created
+          const userStart = turnUserStartMap.get(finalAssistantId) ?? assistants[0]?.info.time.created
 
           // 结束后的校正时长
           let settledDurationMs: number | undefined
@@ -1378,10 +1208,10 @@ const PageBlock = memo(function PageBlock({
           }
 
           const processStateKey = (() => {
-            // 基于 userStart（回合级）而非 row key，跨页时两个壳共享同一 stateKey
-            // → useUiDisclosureState 同步展开/收起，视觉上是一个连续的折叠块
-            if (userStart != null) return `turn-process:userstart:${userStart}`
-            return `turn-process:row:${row.key}`
+            // Session + userStart identify one turn without leaking disclosure state across chats.
+            const sessionKey = finalAssistant.info.sessionID
+            if (userStart != null) return `turn-process:${sessionKey}:userstart:${userStart}`
+            return `turn-process:${sessionKey}:row:${row.key}`
           })()
           // 流式活跃时全部进壳；结束后末条 assistant 拆出 final 正文
           const showFinalOutside = !rowIsActive && finalHasAnswer
@@ -1397,10 +1227,7 @@ const PageBlock = memo(function PageBlock({
                 isActive={rowIsActive}
               >
                 {assistants.map(message =>
-                  renderMessage(
-                    message,
-                    message.info.id === finalAssistantId && !rowIsActive ? 'process' : 'inline',
-                  ),
+                  renderMessage(message, message.info.id === finalAssistantId && !rowIsActive ? 'process' : 'inline'),
                 )}
               </ImmersiveProcessBlock>
               {showFinalOutside && renderMessage(finalAssistant, 'final')}
@@ -1416,18 +1243,19 @@ const PageBlock = memo(function PageBlock({
     <div ref={wrapperRef} className="shrink-0" data-page-key={page.key}>
       {page.rows.map(row => {
         const isUser = row.messages[0].info.role === 'user'
-        return renderRowShell(row.key, isUser, row.messages.map(message => renderMessage(message)), {
-          continuesFromPrevious: row.continuesFromPrevious,
-          continuesToNext: row.continuesToNext,
-        })
+        return renderRowShell(
+          row.key,
+          isUser,
+          row.messages.map(message => renderMessage(message)),
+          {
+            continuesFromPrevious: row.continuesFromPrevious,
+            continuesToNext: row.continuesToNext,
+          },
+        )
       })}
     </div>
   )
 }, arePageBlockPropsEqual)
-
-const CollapsedPagesBlock = memo(function CollapsedPagesBlock({ height }: { height: number }) {
-  return <div className="shrink-0" style={{ height: `${height}px`, overflowAnchor: 'none' }} aria-hidden="true" />
-})
 
 interface RenderedMessageItemProps {
   messageId: string

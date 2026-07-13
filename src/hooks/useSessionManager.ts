@@ -21,8 +21,7 @@ import {
 } from '../api'
 import { sessionErrorHandler } from '../utils'
 import { isSessionNotFoundError } from '../utils/sessionErrors'
-import { INITIAL_MESSAGE_LIMIT } from '../constants'
-import { PAGE_MESSAGE_COUNT, PAGE_ROW_COUNT_FOR_COLLAPSE } from '../features/chat/chatPageModel'
+import { HISTORY_LOAD_BATCH_SIZE, INITIAL_MESSAGE_LIMIT } from '../constants'
 import { useTheme } from './useTheme'
 import type { MessageError } from '../types/message'
 
@@ -64,13 +63,18 @@ function mergeWithLocalStreamingMessages(
   })
 }
 
-export function useSessionManager({ sessionId, directory, onLoadComplete, onError, onSessionMissing }: UseSessionManagerOptions) {
+export function useSessionManager({
+  sessionId,
+  directory,
+  onLoadComplete,
+  onError,
+  onSessionMissing,
+}: UseSessionManagerOptions) {
   const { processCollapseEnabled } = useTheme()
-  // 过程折叠时按 row 数分页（25 row/页），需要更多消息填满预拉取的最少页数；
-  // 非折叠时按消息数分页（20 条/页）。初始加载至少够 5 页。
+  // 每页 10 个渲染单元，初始加载 5 页；过程折叠按每个回合约两条原始消息预留。
   const effectiveInitialLimit = processCollapseEnabled
-    ? Math.max(INITIAL_MESSAGE_LIMIT, PAGE_ROW_COUNT_FOR_COLLAPSE * 5 * 2)
-    : Math.max(INITIAL_MESSAGE_LIMIT, PAGE_MESSAGE_COUNT * 5)
+    ? Math.max(INITIAL_MESSAGE_LIMIT, HISTORY_LOAD_BATCH_SIZE * 2)
+    : INITIAL_MESSAGE_LIMIT
   const loadSequenceRef = useRef<Map<string, number>>(new Map())
   /** 每个 session 当前已请求的消息 limit（cursor），loadMore 时递增 */
   const cursorRef = useRef<Map<string, number>>(new Map())
@@ -201,7 +205,7 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
         onError?.(error instanceof Error ? error : new Error(String(error)))
       }
     },
-    [onLoadComplete, onError, onSessionMissing],
+    [effectiveInitialLimit, onLoadComplete, onError, onSessionMissing],
   )
 
   // 保持 ref 同步，避免 effect 依赖 loadSession 导致重复触发
@@ -220,11 +224,9 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
     if (!state) return
 
     const dir = state.directory || directoryRef.current
-    const currentCursor = cursorRef.current.get(sessionId) ?? Math.max(effectiveInitialLimit, state.messages.length)
-    // 按页面算批量大小：过程折叠 25 row/页 × 5 页 × 2 倍冗余；非折叠 20 条/页 × 5 页
-    const batchSize = processCollapseEnabled
-      ? PAGE_ROW_COUNT_FOR_COLLAPSE * 5 * 2
-      : PAGE_MESSAGE_COUNT * 5
+    const currentCursor = Math.max(cursorRef.current.get(sessionId) ?? 0, state.messages.length)
+    // 每次追加 5 页；过程折叠按每个回合约两条原始消息预留。
+    const batchSize = processCollapseEnabled ? HISTORY_LOAD_BATCH_SIZE * 2 : HISTORY_LOAD_BATCH_SIZE
     const targetCursor = currentCursor + batchSize
 
     try {
@@ -245,7 +247,7 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
     } catch (error) {
       sessionErrorHandler('load more history', error)
     }
-  }, [effectiveInitialLimit, processCollapseEnabled, sessionId])
+  }, [processCollapseEnabled, sessionId])
 
   // ============================================
   // Undo
@@ -376,23 +378,24 @@ export function useSessionManager({ sessionId, directory, onLoadComplete, onErro
       const canUseCached = !!cached && cached.loadState === 'loaded' && !cached.isStale && cached.messages.length > 0
 
       if (canUseCached) {
-        const cachedCursor = Math.max(INITIAL_MESSAGE_LIMIT, cached.messages.length)
-        const prevCursor = cursorRef.current.get(sessionId) ?? 0
-        if (cachedCursor > prevCursor) {
-          cursorRef.current.set(sessionId, cachedCursor)
+        const actualCursor = Math.max(cursorRef.current.get(sessionId) ?? 0, cached.messages.length)
+        if (actualCursor > 0) {
+          cursorRef.current.set(sessionId, actualCursor)
         }
 
-        logger.log('[SessionManager] switch:use-cached', {
-          sessionId,
-          cachedCount: cached.messages.length,
-        })
-        return
+        if (actualCursor >= effectiveInitialLimit || !cached.hasMoreHistory) {
+          logger.log('[SessionManager] switch:use-cached', {
+            sessionId,
+            cachedCount: cached.messages.length,
+          })
+          return
+        }
       }
 
       logger.log('[SessionManager] switch:fetch-session', { sessionId })
       void loadSessionRef.current(sessionId)
     }
-  }, [sessionId])
+  }, [effectiveInitialLimit, sessionId])
 
   return {
     loadSession,

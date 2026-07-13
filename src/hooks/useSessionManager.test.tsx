@@ -1,26 +1,24 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSessionManager } from './useSessionManager'
 
-const {
-  getSessionMock,
-  getSessionMessagesMock,
-  messageStoreMock,
-  sessionErrorHandlerMock,
-} = vi.hoisted(() => ({
-  getSessionMock: vi.fn(),
-  getSessionMessagesMock: vi.fn(),
-  messageStoreMock: {
-    getSessionState: vi.fn(),
-    setLoadState: vi.fn(),
-    setLoadError: vi.fn(),
-    setMessages: vi.fn(),
-    updateSessionMetadata: vi.fn(),
-    prependMessages: vi.fn(),
-    setRevertState: vi.fn(),
-  },
-  sessionErrorHandlerMock: vi.fn(),
-}))
+const { getSessionMock, getSessionMessagesMock, messageStoreMock, themeState, sessionErrorHandlerMock } = vi.hoisted(
+  () => ({
+    getSessionMock: vi.fn(),
+    getSessionMessagesMock: vi.fn(),
+    messageStoreMock: {
+      getSessionState: vi.fn(),
+      setLoadState: vi.fn(),
+      setLoadError: vi.fn(),
+      setMessages: vi.fn(),
+      updateSessionMetadata: vi.fn(),
+      prependMessages: vi.fn(),
+      setRevertState: vi.fn(),
+    },
+    themeState: { processCollapseEnabled: false },
+    sessionErrorHandlerMock: vi.fn(),
+  }),
+)
 
 vi.mock('../api', () => ({
   getSession: (...args: unknown[]) => getSessionMock(...args),
@@ -38,6 +36,10 @@ vi.mock('../utils', () => ({
   sessionErrorHandler: (...args: unknown[]) => sessionErrorHandlerMock(...args),
 }))
 
+vi.mock('./useTheme', () => ({
+  useTheme: () => themeState,
+}))
+
 describe('useSessionManager', () => {
   beforeEach(() => {
     getSessionMock.mockReset()
@@ -50,6 +52,7 @@ describe('useSessionManager', () => {
     messageStoreMock.prependMessages.mockReset()
     messageStoreMock.setRevertState.mockReset()
     sessionErrorHandlerMock.mockReset()
+    themeState.processCollapseEnabled = false
 
     messageStoreMock.getSessionState.mockReturnValue(null)
     getSessionMock.mockResolvedValue({ id: 'session-1', directory: '/workspace/demo' })
@@ -79,5 +82,82 @@ describe('useSessionManager', () => {
       'missing-session',
       expect.objectContaining({ name: 'APIError' }),
     )
+  })
+
+  it('loads five ten-message pages initially in standard mode', async () => {
+    renderHook(() =>
+      useSessionManager({
+        sessionId: 'session-1',
+        directory: '/workspace/demo',
+      }),
+    )
+
+    await waitFor(() => {
+      expect(getSessionMessagesMock).toHaveBeenCalledWith('session-1', 50, '/workspace/demo')
+    })
+  })
+
+  it('reserves two raw messages per collapsed row', async () => {
+    themeState.processCollapseEnabled = true
+
+    renderHook(() =>
+      useSessionManager({
+        sessionId: 'session-1',
+        directory: '/workspace/demo',
+      }),
+    )
+
+    await waitFor(() => {
+      expect(getSessionMessagesMock).toHaveBeenCalledWith('session-1', 100, '/workspace/demo')
+    })
+  })
+
+  it('fills the larger collapsed baseline after switching modes', async () => {
+    const { rerender } = renderHook(() =>
+      useSessionManager({
+        sessionId: 'session-1',
+        directory: '/workspace/demo',
+      }),
+    )
+    await waitFor(() => {
+      expect(getSessionMessagesMock).toHaveBeenCalledWith('session-1', 50, '/workspace/demo')
+    })
+
+    themeState.processCollapseEnabled = true
+    rerender()
+
+    await waitFor(() => {
+      expect(getSessionMessagesMock).toHaveBeenCalledWith('session-1', 100, '/workspace/demo')
+    })
+  })
+
+  it.each([
+    { collapsed: false, expectedLimit: 100 },
+    { collapsed: true, expectedLimit: 200 },
+  ])('loads another five-page batch when collapsed=$collapsed', async ({ collapsed, expectedLimit }) => {
+    themeState.processCollapseEnabled = collapsed
+    const cachedMessageCount = collapsed ? 100 : 50
+    const cachedMessages = Array.from({ length: cachedMessageCount }, (_unused, index) => ({
+      info: { id: `message-${index}` },
+    }))
+    messageStoreMock.getSessionState.mockReturnValue({
+      directory: '/workspace/demo',
+      hasMoreHistory: true,
+      isStale: false,
+      loadState: 'loaded',
+      messages: cachedMessages,
+    })
+    const { result } = renderHook(() =>
+      useSessionManager({
+        sessionId: 'session-1',
+        directory: '/workspace/demo',
+      }),
+    )
+
+    await act(async () => {
+      await result.current.loadMoreHistory()
+    })
+
+    expect(getSessionMessagesMock).toHaveBeenCalledWith('session-1', expectedLimit, '/workspace/demo')
   })
 })

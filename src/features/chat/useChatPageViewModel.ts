@@ -10,12 +10,14 @@ import {
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
   buildTurnUserStartMap,
+  PAGE_MESSAGE_COUNT,
   reconcileStableChatPages,
   type MessageGroupRow,
   type StableChatPage,
 } from './chatPageModel'
 
 export interface ChatPageViewModel {
+  paginationKey: string
   visibleMessageEntries: VisibleMessageEntry[]
   visibleMessages: Message[]
   pageRecords: StableChatPage[]
@@ -129,6 +131,7 @@ function sameRow(a: MessageGroupRow, b: MessageGroupRow) {
   return (
     a.key === b.key &&
     a.estimatedHeight === b.estimatedHeight &&
+    a.collapsed === b.collapsed &&
     a.continuesFromPrevious === b.continuesFromPrevious &&
     a.continuesToNext === b.continuesToNext &&
     sameStringList(a.messageIds, b.messageIds) &&
@@ -185,31 +188,37 @@ export function buildChatPageViewModel(
   rowCountLimit?: number,
   collapsed: boolean = false,
 ): ChatPageViewModel {
+  const paginationKey = `${collapsed ? 'collapsed' : 'standard'}:${rowCountLimit ?? PAGE_MESSAGE_COUNT}`
+  const reusablePrevious = previous?.paginationKey === paginationKey ? previous : undefined
   const visibleMessageEntries = reuseVisibleMessageEntries(
-    previous?.visibleMessageEntries,
+    reusablePrevious?.visibleMessageEntries,
     buildVisibleMessageEntries(messages),
   )
-  const visibleMessages = visibleMessagesFromEntries(previous?.visibleMessages, visibleMessageEntries)
+  const visibleMessages = visibleMessagesFromEntries(reusablePrevious?.visibleMessages, visibleMessageEntries)
   const pageRecords = reusePageRecords(
-    previous?.pageRecords,
+    reusablePrevious?.pageRecords,
     reconcileStableChatPages({
-      currentPages: previous?.pageRecords ?? [],
+      currentPages: reusablePrevious?.pageRecords ?? [],
       nextMessages: visibleMessages,
-      allocateKey: page => page.key,
+      allocateKey: page => `${paginationKey}:${page.key}`,
       rowCountLimit,
       collapsed,
     }),
   )
-  const forkTargetIdMap = reuseMap(previous?.forkTargetIdMap, buildForkTargetIdMap(visibleMessageEntries))
+  const forkTargetIdMap = reuseMap(reusablePrevious?.forkTargetIdMap, buildForkTargetIdMap(visibleMessageEntries))
   const outlineModel = getStableOutlineModel(visibleMessages)
-  const turnDurationMap = reuseMap(previous?.turnDurationMap, buildTurnDurationMap(messages, visibleMessages))
-  const turnUserStartMap = reuseMap(previous?.turnUserStartMap, buildTurnUserStartMap(messages, visibleMessages))
+  const turnDurationMap = reuseMap(reusablePrevious?.turnDurationMap, buildTurnDurationMap(messages, visibleMessages))
+  const turnUserStartMap = reuseMap(
+    reusablePrevious?.turnUserStartMap,
+    buildTurnUserStartMap(messages, visibleMessages),
+  )
   const turnLatestAssistantIds = reuseSet(
-    previous?.turnLatestAssistantIds,
+    reusablePrevious?.turnLatestAssistantIds,
     buildTurnLatestAssistantIdSet(visibleMessages),
   )
 
   return {
+    paginationKey,
     visibleMessageEntries,
     visibleMessages,
     pageRecords,
@@ -222,7 +231,11 @@ export function buildChatPageViewModel(
   }
 }
 
-export function useChatPageViewModel(messages: Message[], rowCountLimit?: number, collapsed?: boolean): ChatPageViewModel {
+export function useChatPageViewModel(
+  messages: Message[],
+  rowCountLimit?: number,
+  collapsed?: boolean,
+): ChatPageViewModel {
   const previousRef = useRef<ChatPageViewModel | undefined>(undefined)
   return useMemo(() => {
     const viewModel = buildChatPageViewModel(messages, previousRef.current, rowCountLimit, collapsed)

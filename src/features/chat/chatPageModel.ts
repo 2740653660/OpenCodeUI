@@ -1,13 +1,13 @@
-import type { Message } from '../../types/message'
+import { isVisibleReasoningPart, isVisibleTextPart, type Message } from '../../types/message'
 
-export const PAGE_MESSAGE_COUNT = 20
+export const PAGE_MESSAGE_COUNT = 10
 export const PAGE_EXTREME_RENDER_WEIGHT = 700
 export const PAGE_OVERSCAN_VIEWPORTS = 2
-export const PAGE_ADJACENT_OVERSCAN = 1
+export const PAGE_ADJACENT_OVERSCAN = 4
 /** 过程折叠时按 row 数（折叠块数）分页，一个折叠块算一条 */
-export const PAGE_ROW_COUNT_FOR_COLLAPSE = 25
+export const PAGE_ROW_COUNT_FOR_COLLAPSE = 10
 /** 过程折叠时 collapsed 占位按收起状态估算高度，让滑动窗口展开发生在视口外 */
-export const COLLAPSE_HEADER_HEIGHT_PX = 32
+const COLLAPSE_HEADER_HEIGHT_PX = 32
 
 export interface MessageGroupRow {
   key: string
@@ -17,6 +17,7 @@ export interface MessageGroupRow {
   renderWeight?: number
   continuesFromPrevious?: boolean
   continuesToNext?: boolean
+  collapsed?: boolean
 }
 
 export interface ChatPage {
@@ -129,29 +130,41 @@ export function estimateMessageRenderWeight(message: Message): number {
   return result
 }
 
-function estimateMessageHeight(message: Message, collapsed: boolean = false): number {
+function estimateMessageHeight(message: Message): number {
   if (message.info.role === 'user') {
     return Math.max(72, message.parts.length * 40)
-  }
-  if (collapsed) {
-    // 过程折叠收起后：header + final text（只算非 synthetic 的 text part）
-    let height = COLLAPSE_HEADER_HEIGHT_PX
-    for (const part of message.parts) {
-      if (part.type === 'text' && !(part as { synthetic?: boolean }).synthetic) {
-        const text = (part as { text: string }).text
-        height += Math.max(40, Math.ceil(text.length / 100) * 20)
-      }
-    }
-    return height
   }
   return Math.max(160, message.parts.length * 80)
 }
 
-function estimateGroupHeight(messages: Message[], collapsed: boolean = false): number {
+function estimateFinalTextHeight(message: Message | undefined): number {
+  if (!message) return 0
+
+  let height = 0
+  let foundFinalText = false
+  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
+    const part = message.parts[index]
+    if (part.type === 'step-start' || part.type === 'snapshot' || part.type === 'patch') continue
+    if (part.type === 'text' && !isVisibleTextPart(part)) continue
+    if (part.type === 'reasoning' && !isVisibleReasoningPart(part)) continue
+    if (part.type === 'step-finish' && !foundFinalText) continue
+    if (!isVisibleTextPart(part)) break
+    foundFinalText = true
+    height += Math.max(40, Math.ceil(part.text.length / 100) * 20)
+  }
+  return height
+}
+
+function estimateCollapsedAssistantGroupHeight(messages: Message[]): number {
+  const finalTextHeight = estimateFinalTextHeight(messages.at(-1))
+  return 24 + COLLAPSE_HEADER_HEIGHT_PX + (finalTextHeight > 0 ? 8 + finalTextHeight : 0)
+}
+
+function estimateGroupHeight(messages: Message[]): number {
   let total = 24
   for (let index = 0; index < messages.length; index++) {
     if (index > 0) total += 8
-    total += estimateMessageHeight(messages[index], collapsed)
+    total += estimateMessageHeight(messages[index])
   }
   return total
 }
@@ -160,8 +173,11 @@ function estimateRowHeight(
   messages: Message[],
   options?: { continuesFromPrevious?: boolean; continuesToNext?: boolean; collapsed?: boolean },
 ) {
+  if (options?.collapsed && messages[0]?.info.role === 'assistant') {
+    return estimateCollapsedAssistantGroupHeight(messages)
+  }
   const paddingReduction = (options?.continuesFromPrevious ? 4 : 0) + (options?.continuesToNext ? 12 : 0)
-  return estimateGroupHeight(messages, options?.collapsed) - paddingReduction
+  return estimateGroupHeight(messages) - paddingReduction
 }
 
 function estimateGroupRenderWeight(messages: Message[]): number {
@@ -181,6 +197,7 @@ function buildMessageGroupRow(
     renderWeight: estimateGroupRenderWeight(group),
     continuesFromPrevious: options?.continuesFromPrevious,
     continuesToNext: options?.continuesToNext,
+    collapsed: options?.collapsed,
   }
 }
 
@@ -202,7 +219,11 @@ function splitOversizedMessageGroups(
   rows: MessageGroupRow[],
   pageMessageCount: number,
   maxRenderWeight: number,
+  collapsed: boolean,
 ): MessageGroupRow[] {
+  // A collapsed assistant turn is one UI block and must remain atomic.
+  if (collapsed) return rows
+
   return rows.flatMap(row => {
     if (row.messages.length <= pageMessageCount && (row.renderWeight ?? 0) <= maxRenderWeight) return row
 
@@ -240,7 +261,12 @@ export function buildChatPages(
   rowCountLimit = pageMessageCount,
   collapsed: boolean = false,
 ): ChatPage[] {
-  const rows = splitOversizedMessageGroups(buildMessageGroups(messages, collapsed), pageMessageCount, maxRenderWeight)
+  const rows = splitOversizedMessageGroups(
+    buildMessageGroups(messages, collapsed),
+    pageMessageCount,
+    maxRenderWeight,
+    collapsed,
+  )
   const renderPages: ChatPage[] = []
 
   let currentRows: MessageGroupRow[] = []
@@ -249,16 +275,11 @@ export function buildChatPages(
   for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex--) {
     const row = rows[rowIndex]
     const rowRenderWeight = row.renderWeight ?? estimateGroupRenderWeight(row.messages)
-    // 切页条件：当前页非空 + 超限。但 continuesFromPrevious 的 row 不能开始新页——
-    // 它是上一 row 的续接（同一回合被 splitOversizedMessageGroups 切开），
-    // 分到不同 page 会导致过程折叠块跨页。
-    // rowCountLimit 默认等于 pageMessageCount；过程折叠时可传 PAGE_ROW_COUNT_FOR_COLLAPSE
-    // 让分页按折叠块数（row 数）而非物理消息数计算。
-    const wouldExceedLimit =
-      currentRows.length + 1 > rowCountLimit ||
-      currentMessageCount + row.messages.length > pageMessageCount ||
-      currentRenderWeight + rowRenderWeight > maxRenderWeight
-    if (currentRows.length > 0 && wouldExceedLimit && !row.continuesFromPrevious) {
+    const wouldExceedItemLimit = collapsed
+      ? currentRows.length + 1 > rowCountLimit
+      : currentMessageCount + row.messages.length > pageMessageCount
+    const wouldExceedRenderWeight = currentRenderWeight + rowRenderWeight > maxRenderWeight
+    if (currentRows.length > 0 && (wouldExceedItemLimit || wouldExceedRenderWeight)) {
       renderPages.push(buildChatPage(currentRows))
       currentRows = []
       currentMessageCount = 0
@@ -306,11 +327,13 @@ function connectAssistantPageBoundary(
   olderRows[olderRows.length - 1] = buildMessageGroupRow(olderBoundaryRow.messages, {
     continuesFromPrevious: olderBoundaryRow.continuesFromPrevious,
     continuesToNext: true,
+    collapsed: olderBoundaryRow.collapsed,
   })
   const newerRows = newerPage.rows.slice()
   newerRows[0] = buildMessageGroupRow(newerBoundaryRow.messages, {
     continuesFromPrevious: true,
     continuesToNext: newerBoundaryRow.continuesToNext,
+    collapsed: newerBoundaryRow.collapsed,
   })
 
   return {
@@ -327,7 +350,10 @@ export function buildStableChatPages(
   rowCountLimit = pageMessageCount,
   collapsed: boolean = false,
 ): StableChatPage[] {
-  return buildChatPages(messages, pageMessageCount, maxRenderWeight, rowCountLimit, collapsed).map(page => ({ ...page, key: allocateKey(page) }))
+  return buildChatPages(messages, pageMessageCount, maxRenderWeight, rowCountLimit, collapsed).map(page => ({
+    ...page,
+    key: allocateKey(page),
+  }))
 }
 
 export function buildContentKeyedChatPages(
@@ -386,6 +412,7 @@ function rebuildPageWithFreshMessages(page: StableChatPage, nextById: Map<string
       renderWeight: estimateGroupRenderWeight(messages),
       continuesFromPrevious: row.continuesFromPrevious,
       continuesToNext: row.continuesToNext,
+      collapsed: row.collapsed,
     }
   })
 
@@ -438,23 +465,57 @@ export function reconcileStableChatPages(options: {
     const suffixWeight = suffixMessages.reduce((sum, message) => sum + estimateMessageRenderWeight(message), 0)
     const newestWeight = newestPage?.renderWeight ?? 0
 
-    if (
-      newestPage &&
-      newestPage.messageIds.length + suffixMessages.length <= pageMessageCount &&
-      newestWeight + suffixWeight <= maxRenderWeight
-    ) {
-      const combinedRows = buildMessageGroups([...newestMessages, ...suffixMessages])
+    const combinedRows = buildMessageGroups([...newestMessages, ...suffixMessages], collapsed)
+    const combinedItemCount = collapsed
+      ? combinedRows.length
+      : newestPage?.messageIds.length != null
+        ? newestPage.messageIds.length + suffixMessages.length
+        : Number.POSITIVE_INFINITY
+    if (newestPage && combinedItemCount <= rowCountLimit && newestWeight + suffixWeight <= maxRenderWeight) {
       const previousFirstRow = newestPage.rows[0]
       if (
         previousFirstRow?.continuesFromPrevious &&
         combinedRows[0]?.messageIds[0] === previousFirstRow.messageIds[0]
       ) {
-        combinedRows[0] = buildMessageGroupRow(combinedRows[0].messages, { continuesFromPrevious: true })
+        combinedRows[0] = buildMessageGroupRow(combinedRows[0].messages, {
+          continuesFromPrevious: true,
+          collapsed,
+        })
       }
       const combinedPage = buildChatPage(combinedRows)
       nextPages = [{ ...combinedPage, key: newestPage.key }, ...refreshedPages.slice(1)]
+    } else if (collapsed && newestPage) {
+      let mergedSuffixCount = 0
+      if (newestMessages.at(-1)?.info.role === 'assistant' && suffixMessages[0]?.info.role === 'assistant') {
+        while (suffixMessages[mergedSuffixCount]?.info.role === 'assistant') mergedSuffixCount += 1
+      }
+
+      let continuedNewestPage = newestPage
+      if (mergedSuffixCount > 0) {
+        const continuedRows = buildMessageGroups(
+          [...newestMessages, ...suffixMessages.slice(0, mergedSuffixCount)],
+          true,
+        )
+        continuedNewestPage = { ...buildChatPage(continuedRows), key: newestPage.key }
+      }
+      const appendedPages = buildStableChatPages(
+        suffixMessages.slice(mergedSuffixCount),
+        allocateKey,
+        pageMessageCount,
+        maxRenderWeight,
+        rowCountLimit,
+        true,
+      )
+      nextPages = [...appendedPages, continuedNewestPage, ...refreshedPages.slice(1)]
     } else {
-      let appendedPages = buildStableChatPages(suffixMessages, allocateKey, pageMessageCount, maxRenderWeight, rowCountLimit, collapsed)
+      let appendedPages = buildStableChatPages(
+        suffixMessages,
+        allocateKey,
+        pageMessageCount,
+        maxRenderWeight,
+        rowCountLimit,
+        collapsed,
+      )
       let continuedNewestPage = newestPage
       const boundaryPage = appendedPages.at(-1)
       const connection = newestPage && boundaryPage ? connectAssistantPageBoundary(newestPage, boundaryPage) : null
@@ -468,18 +529,51 @@ export function reconcileStableChatPages(options: {
   }
 
   if (prefixMessages.length > 0) {
-    let prependedOlderPages = buildStableChatPages(prefixMessages, allocateKey, pageMessageCount, maxRenderWeight)
+    let prependedOlderPages = buildStableChatPages(
+      prefixMessages,
+      allocateKey,
+      pageMessageCount,
+      maxRenderWeight,
+      rowCountLimit,
+      collapsed,
+    )
     const currentOldestPage = nextPages.at(-1)
     const prefixBoundaryPage = prependedOlderPages[0]
-    const connection =
-      prefixBoundaryPage && currentOldestPage
-        ? connectAssistantPageBoundary(prefixBoundaryPage, currentOldestPage)
-        : null
-    if (connection) {
-      nextPages = [...nextPages.slice(0, -1), connection.newerPage]
-      prependedOlderPages = [connection.olderPage, ...prependedOlderPages.slice(1)]
+    const prefixBoundaryRow = prefixBoundaryPage?.rows.at(-1)
+    const currentBoundaryRow = currentOldestPage?.rows[0]
+    if (
+      collapsed &&
+      prefixBoundaryPage &&
+      currentOldestPage &&
+      prefixBoundaryRow?.messages[0]?.info.role === 'assistant' &&
+      currentBoundaryRow?.messages[0]?.info.role === 'assistant'
+    ) {
+      const currentRows = currentOldestPage.rows.slice()
+      currentRows[0] = buildMessageGroupRow([...prefixBoundaryRow.messages, ...currentBoundaryRow.messages], {
+        collapsed: true,
+      })
+      const continuedCurrentPage = { ...buildChatPage(currentRows), key: currentOldestPage.key }
+
+      const remainingPrefixRows = prefixBoundaryPage.rows.slice(0, -1)
+      const remainingBoundaryPage =
+        remainingPrefixRows.length > 0 ? { ...buildChatPage(remainingPrefixRows), key: prefixBoundaryPage.key } : null
+      nextPages = [
+        ...nextPages.slice(0, -1),
+        continuedCurrentPage,
+        ...(remainingBoundaryPage ? [remainingBoundaryPage] : []),
+        ...prependedOlderPages.slice(1),
+      ]
+    } else {
+      const connection =
+        prefixBoundaryPage && currentOldestPage
+          ? connectAssistantPageBoundary(prefixBoundaryPage, currentOldestPage)
+          : null
+      if (connection) {
+        nextPages = [...nextPages.slice(0, -1), connection.newerPage]
+        prependedOlderPages = [connection.olderPage, ...prependedOlderPages.slice(1)]
+      }
+      nextPages = [...nextPages, ...prependedOlderPages]
     }
-    nextPages = [...nextPages, ...prependedOlderPages]
   }
 
   return nextPages
@@ -631,6 +725,43 @@ export function expandSelectionWithPageKeys(options: {
   }
 
   return nextSelection
+}
+
+export function buildRetainedPageKeys(options: {
+  pages: ChatPage[]
+  expandedRange: PageRange
+  previousPageKeys: Set<string>
+  retentionPageCount: number
+}): Set<string> {
+  const { pages, expandedRange, previousPageKeys } = options
+  const retentionPageCount = Math.max(0, Math.floor(options.retentionPageCount))
+  const retentionStart = Math.max(0, expandedRange.startIndex - retentionPageCount)
+  const retentionEnd = Math.min(pages.length - 1, expandedRange.endIndex + retentionPageCount)
+  const next = new Set<string>()
+
+  for (let index = expandedRange.startIndex; index <= expandedRange.endIndex; index += 1) {
+    const page = pages[index]
+    if (page) next.add(page.key)
+  }
+  for (let index = retentionStart; index <= retentionEnd; index += 1) {
+    const page = pages[index]
+    if (page && previousPageKeys.has(page.key)) next.add(page.key)
+  }
+
+  if (next.size === previousPageKeys.size && [...next].every(key => previousPageKeys.has(key))) {
+    return previousPageKeys
+  }
+  return next
+}
+
+export function shouldPrefetchHistory(pageCount: number, expandedEndIndex: number, reservePageCount: number): boolean {
+  if (pageCount <= 0 || expandedEndIndex < 0) return false
+  return pageCount - 1 - expandedEndIndex <= Math.max(0, Math.floor(reservePageCount))
+}
+
+export function buildHistoryPrefetchAttemptKey(sessionId: string | null | undefined, pages: ChatPage[]): string {
+  const oldestPage = pages.at(-1)
+  return `${sessionId ?? ''}:${pages.length}:${oldestPage?.key ?? ''}`
 }
 
 export function buildPageRenderSegments(options: {

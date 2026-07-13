@@ -3,6 +3,8 @@ import {
   buildChatPages,
   buildExpandedPageSelection,
   buildPageRenderSegments,
+  buildHistoryPrefetchAttemptKey,
+  buildRetainedPageKeys,
   buildTurnDurationMap,
   buildTurnLatestAssistantIdSet,
   buildTurnUserStartMap,
@@ -13,8 +15,13 @@ import {
   findMessageSequenceOffset,
   reconcileStableChatPages,
   seedMeasuredPageHeightsFromPreviousPages,
+  shouldPrefetchHistory,
 } from './chatPageModel'
-import { buildVisibleMessageEntries, getVisibleMessageForkTargetId } from './chatAreaVisibility'
+import {
+  buildVisibleMessageEntries,
+  findActiveTurnAssistantId,
+  getVisibleMessageForkTargetId,
+} from './chatAreaVisibility'
 import { buildChatPageViewModel } from './useChatPageViewModel'
 import { arePageBlockPropsEqual } from './ChatArea'
 import type { Message, MessageError, Part, ToolPart, ReasoningPart } from '../../types/message'
@@ -86,7 +93,7 @@ function createToolPart(id: string, messageID: string): ToolPart {
   }
 }
 
-function createTextPart(id: string, messageID: string, text: string): Part {
+function createTextPart(id: string, messageID: string, text: string): Extract<Part, { type: 'text' }> {
   return {
     id,
     sessionID: 'session-1',
@@ -115,6 +122,10 @@ function createPage(messages: Message[]) {
 function createPageBlockProps(page = createPage([createAssistantMessage('assistant-1', [], 1, 2)])) {
   return {
     page,
+    expanded: true,
+    collapsedHeight: page.estimatedHeight,
+    registerPageSlot: () => undefined,
+    processCollapseEnabled: false,
     messageMaxWidthClass: 'max-w-2xl',
     messagePaddingClass: 'px-5',
     registerMessage: () => undefined,
@@ -124,6 +135,7 @@ function createPageBlockProps(page = createPage([createAssistantMessage('assista
     turnDurationMap: new Map<string, number>(),
     turnUserStartMap: new Map<string, number>(),
     turnLatestAssistantIds: new Set<string>(),
+    activeTurnAssistantId: null,
     forkTargetIdMap: new Map<string, string | undefined>(),
     allowStreamingLayoutAnimation: false,
     onMeasuredHeightChange: () => undefined,
@@ -131,6 +143,16 @@ function createPageBlockProps(page = createPage([createAssistantMessage('assista
 }
 
 describe('buildVisibleMessageEntries', () => {
+  it('does not reactivate the previous turn before the new assistant arrives', () => {
+    const previousAssistant = createAssistantMessage('assistant-previous', [], 2, 3)
+    const nextUser = createUserMessage('user-next', 4)
+
+    expect(findActiveTurnAssistantId([previousAssistant, nextUser], true)).toBeNull()
+    expect(
+      findActiveTurnAssistantId([previousAssistant, nextUser, createAssistantMessage('assistant-next', [], 5)], true),
+    ).toBe('assistant-next')
+  })
+
   it('keeps source ids for merged assistant tool messages', () => {
     const first = createAssistantMessage('assistant-1', [createToolPart('tool-1', 'assistant-1')])
     const second = createAssistantMessage('assistant-2', [createToolPart('tool-2', 'assistant-2')])
@@ -280,7 +302,7 @@ describe('buildChatPageViewModel', () => {
     const previousNewestPage = next.pageRecords.find(page => page.key === first.pageRecords[0].key)
     expect(previousNewestPage?.key).toBe(first.pageRecords[0].key)
     expect(previousNewestPage?.messageIds).toContain(first.pageRecords[0].messageIds[0])
-    expect(previousNewestPage?.messageIds).toContain('user-next')
+    expect(next.pageRecords[0].messageIds).toEqual(['user-next'])
   })
 
   it('keeps new history pages when there is no previous page match', () => {
@@ -324,28 +346,32 @@ describe('buildChatPageViewModel', () => {
     const first = buildChatPageViewModel(messages)
     const reordered = buildChatPageViewModel([...messages.slice(20), ...messages.slice(0, 20)], first)
 
-    expect(first.pageRecords).toHaveLength(2)
-    expect(reordered.pageRecords[0]).toBe(first.pageRecords[1])
-    expect(reordered.pageRecords[1]).toBe(first.pageRecords[0])
+    expect(first.pageRecords).toHaveLength(4)
+    expect(reordered.pageRecords).toEqual([
+      first.pageRecords[2],
+      first.pageRecords[3],
+      first.pageRecords[0],
+      first.pageRecords[1],
+    ])
   })
 
-  it('starts a new stable page after twenty visible messages', () => {
-    const messages = Array.from({ length: 20 }, (_unused, index) => ({
+  it('starts a new stable page after ten visible messages', () => {
+    const messages = Array.from({ length: 10 }, (_unused, index) => ({
       ...createUserMessage(`user-${index}`, index),
       parts: [createTextPart(`text-${index}`, `user-${index}`, `prompt ${index}`)],
     }))
     const first = buildChatPageViewModel(messages)
 
     const nextMessage = {
-      ...createUserMessage('user-20', 20),
-      parts: [createTextPart('text-20', 'user-20', 'prompt 20')],
+      ...createUserMessage('user-10', 10),
+      parts: [createTextPart('text-10', 'user-10', 'prompt 10')],
     }
     const next = buildChatPageViewModel([...messages, nextMessage], first)
 
     expect(first.pageRecords).toHaveLength(1)
     expect(next.pageRecords).toHaveLength(2)
     expect(next.pageRecords[1]).toBe(first.pageRecords[0])
-    expect(next.pageRecords[0].messageIds).toEqual(['user-20'])
+    expect(next.pageRecords[0].messageIds).toEqual(['user-10'])
   })
 
   it('splits an oversized assistant group at the page limit', () => {
@@ -363,21 +389,88 @@ describe('buildChatPageViewModel', () => {
     const appended = buildChatPageViewModel(
       [
         ...messages,
-        createAssistantMessage(
-          'assistant-26',
-          [createTextPart('text-26', 'assistant-26', longText)],
-          26,
-          27,
-        ),
+        createAssistantMessage('assistant-26', [createTextPart('text-26', 'assistant-26', longText)], 26, 27),
       ],
       viewModel,
     )
 
-    expect(viewModel.pageRecords).toHaveLength(2)
-    expect(viewModel.pageRecords.map(page => page.messageIds.length)).toEqual([6, 20])
+    expect(viewModel.pageRecords).toHaveLength(3)
+    expect(viewModel.pageRecords.map(page => page.messageIds.length)).toEqual([6, 10, 10])
     expect(viewModel.pageRecords[0].rows[0].continuesFromPrevious).toBe(true)
     expect(viewModel.pageRecords[1].rows[0].continuesToNext).toBe(true)
     expect(appended.pageRecords[0].rows[0].continuesFromPrevious).toBe(true)
+  })
+
+  it('rebuilds page identity when process collapse mode changes', () => {
+    const messages = Array.from({ length: 12 }, (_unused, index) =>
+      createAssistantMessage(
+        `assistant-${index}`,
+        [createTextPart(`text-${index}`, `assistant-${index}`, `answer ${index}`)],
+        index,
+        index + 1,
+      ),
+    )
+    const standard = buildChatPageViewModel(messages)
+    const collapsed = buildChatPageViewModel(messages, standard, 10, true)
+
+    expect(standard.paginationKey).toBe('standard:10')
+    expect(collapsed.paginationKey).toBe('collapsed:10')
+    expect(standard.pageRecords).toHaveLength(2)
+    expect(collapsed.pageRecords).toHaveLength(1)
+    expect(collapsed.pageRecords[0].rows).toHaveLength(1)
+    expect(collapsed.pageRecords[0].key).not.toBe(standard.pageRecords[0].key)
+    expect(collapsed.pageRecords[0]).not.toBe(standard.pageRecords[0])
+  })
+
+  it('keeps completed collapsed pages stable when a new page starts', () => {
+    const messages = Array.from({ length: 20 }, (_unused, index) => ({
+      ...createUserMessage(`user-${index}`, index),
+      parts: [createTextPart(`text-${index}`, `user-${index}`, `prompt ${index}`)],
+    }))
+    const first = buildChatPageViewModel(messages, undefined, 10, true)
+    const next = buildChatPageViewModel(
+      [
+        ...messages,
+        {
+          ...createUserMessage('user-20', 20),
+          parts: [createTextPart('text-20', 'user-20', 'prompt 20')],
+        },
+      ],
+      first,
+      10,
+      true,
+    )
+
+    expect(first.pageRecords).toHaveLength(2)
+    expect(next.pageRecords).toHaveLength(3)
+    expect(next.pageRecords[0].messageIds).toEqual(['user-20'])
+    expect(next.pageRecords[1]).toBe(first.pageRecords[0])
+    expect(next.pageRecords[2]).toBe(first.pageRecords[1])
+  })
+
+  it('merges a collapsed assistant continuation into the stable boundary page', () => {
+    const messages = [
+      ...Array.from({ length: 9 }, (_unused, index) => ({
+        ...createUserMessage(`user-${index}`, index),
+        parts: [createTextPart(`text-${index}`, `user-${index}`, `prompt ${index}`)],
+      })),
+      createAssistantMessage('assistant-1', [createTextPart('assistant-text-1', 'assistant-1', 'first')], 10, 11),
+    ]
+    const first = buildChatPageViewModel(messages, undefined, 10, true)
+    const next = buildChatPageViewModel(
+      [
+        ...messages,
+        createAssistantMessage('assistant-2', [createTextPart('assistant-text-2', 'assistant-2', 'second')], 12, 13),
+      ],
+      first,
+      10,
+      true,
+    )
+
+    expect(next.pageRecords).toHaveLength(1)
+    expect(next.pageRecords[0].key).toBe(first.pageRecords[0].key)
+    expect(next.pageRecords[0].rows.at(-1)?.messageIds).toEqual(['assistant-1', 'assistant-2'])
+    expect(next.pageRecords[0].rows.at(-1)?.collapsed).toBe(true)
   })
 
   it('keeps a growing streaming assistant in the current stable page', () => {
@@ -420,11 +513,7 @@ describe('buildChatPageViewModel', () => {
     )
     const first = buildChatPageViewModel([firstAssistant])
     const secondAssistant = {
-      ...createAssistantMessage(
-        'assistant-2',
-        [createTextPart('assistant-text-2', 'assistant-2', 'second answer')],
-        3,
-      ),
+      ...createAssistantMessage('assistant-2', [createTextPart('assistant-text-2', 'assistant-2', 'second answer')], 3),
       isStreaming: true,
     }
 
@@ -472,6 +561,14 @@ describe('arePageBlockPropsEqual', () => {
     expect(
       arePageBlockPropsEqual(streamingPrevious, { ...streamingPrevious, allowStreamingLayoutAnimation: true }),
     ).toBe(false)
+  })
+
+  it('updates only the page containing the active turn assistant', () => {
+    const page = createPage([createAssistantMessage('assistant-1', [], 1, 2)])
+    const previous = createPageBlockProps(page)
+
+    expect(arePageBlockPropsEqual(previous, { ...previous, activeTurnAssistantId: 'assistant-other' })).toBe(true)
+    expect(arePageBlockPropsEqual(previous, { ...previous, activeTurnAssistantId: 'assistant-1' })).toBe(false)
   })
 })
 
@@ -549,13 +646,13 @@ describe('buildChatPages', () => {
     expect(pages[2].messageIds).toEqual(['user-1'])
   })
 
-  it('uses twenty visible messages as the default page size', () => {
+  it('uses ten visible messages as the default page size', () => {
     const messages = Array.from({ length: 25 }, (_unused, index) => createUserMessage(`user-${index}`, index))
 
     const pages = buildChatPages(messages)
 
-    expect(pages).toHaveLength(2)
-    expect(pages.map(page => page.messageIds.length)).toEqual([20, 5])
+    expect(pages).toHaveLength(3)
+    expect(pages.map(page => page.messageIds.length)).toEqual([10, 10, 5])
   })
 
   it('uses render weight only as an extreme page limit', () => {
@@ -578,14 +675,12 @@ describe('buildChatPages', () => {
 
   it('counts blank lines before fenced code independently of indentation', () => {
     const suffix = '```ts\nconst value = 1\n```'
-    const withoutIndent = createAssistantMessage(
-      'assistant-plain-lines',
-      [createTextPart('text-plain-lines', 'assistant-plain-lines', `${'\n'.repeat(100)}${suffix}`)],
-    )
-    const withIndent = createAssistantMessage(
-      'assistant-indented-lines',
-      [createTextPart('text-indented-lines', 'assistant-indented-lines', `${' \n'.repeat(100)}${suffix}`)],
-    )
+    const withoutIndent = createAssistantMessage('assistant-plain-lines', [
+      createTextPart('text-plain-lines', 'assistant-plain-lines', `${'\n'.repeat(100)}${suffix}`),
+    ])
+    const withIndent = createAssistantMessage('assistant-indented-lines', [
+      createTextPart('text-indented-lines', 'assistant-indented-lines', `${' \n'.repeat(100)}${suffix}`),
+    ])
 
     expect(estimateMessageRenderWeight(withIndent)).toBe(estimateMessageRenderWeight(withoutIndent))
   })
@@ -605,6 +700,78 @@ describe('buildChatPages', () => {
     const unsplitHeight = buildChatPages(messages.slice(0, 6), 6)[0].rows[0].estimatedHeight
     expect(pages[0].rows[0].estimatedHeight).toBe(buildChatPages(messages.slice(6), 6)[0].rows[0].estimatedHeight - 4)
     expect(pages[1].rows[0].estimatedHeight).toBe(unsplitHeight - 12)
+  })
+
+  it('keeps a collapsed assistant turn atomic even when it exceeds the page size', () => {
+    const messages = Array.from({ length: 26 }, (_unused, index) =>
+      createAssistantMessage(`assistant-${index}`, [], index, index + 1),
+    )
+
+    const pages = buildChatPages(messages, 10, 700, 10, true)
+
+    expect(pages).toHaveLength(1)
+    expect(pages[0].rows).toHaveLength(1)
+    expect(pages[0].messageIds).toHaveLength(26)
+    expect(pages[0].rows[0].continuesFromPrevious).toBeUndefined()
+    expect(pages[0].rows[0].continuesToNext).toBeUndefined()
+  })
+
+  it('paginates collapsed rows in groups of ten', () => {
+    const messages = Array.from({ length: 22 }, (_unused, index) => createUserMessage(`user-${index}`, index))
+
+    const pages = buildChatPages(messages, 10, 700, 10, true)
+
+    expect(pages.map(page => page.rows.length)).toEqual([10, 10, 2])
+  })
+
+  it('estimates one collapsed header and only the final assistant text', () => {
+    const final = createAssistantMessage(
+      'assistant-final',
+      [createTextPart('text-final', 'assistant-final', 'final answer')],
+      3,
+      4,
+    )
+    const shortProcess = createAssistantMessage(
+      'assistant-process',
+      [createTextPart('text-process', 'assistant-process', 'short')],
+      1,
+      2,
+    )
+    const longProcess = createAssistantMessage(
+      'assistant-process',
+      [createTextPart('text-process', 'assistant-process', 'process '.repeat(5000))],
+      1,
+      2,
+    )
+
+    const shortEstimate = buildChatPages([shortProcess, final], 10, 700, 10, true)[0].estimatedHeight
+    const longEstimate = buildChatPages([longProcess, final], 10, 700, 10, true)[0].estimatedHeight
+
+    expect(longEstimate).toBe(shortEstimate)
+  })
+
+  it('tracks final text growth while ignoring trailing hidden text', () => {
+    const shortFinal = createAssistantMessage(
+      'assistant-final',
+      [createTextPart('text-final', 'assistant-final', 'short final')],
+      1,
+      2,
+    )
+    const longFinal = createAssistantMessage(
+      'assistant-final',
+      [
+        createTextPart('text-final', 'assistant-final', 'final '.repeat(500)),
+        { ...createTextPart('text-system', 'assistant-final', 'hidden context'), synthetic: true },
+        createTextPart('text-empty', 'assistant-final', '   '),
+      ],
+      1,
+      2,
+    )
+
+    const shortEstimate = buildChatPages([shortFinal], 10, 700, 10, true)[0].estimatedHeight
+    const longEstimate = buildChatPages([longFinal], 10, 700, 10, true)[0].estimatedHeight
+
+    expect(longEstimate).toBeGreaterThan(shortEstimate)
   })
 })
 
@@ -661,6 +828,25 @@ describe('computeExpandedPageRange', () => {
     })
 
     expect(range).toEqual({ startIndex: 0, endIndex: 0 })
+  })
+
+  it('preloads adjacent pages from tall pages when no height guard is requested', () => {
+    const pages = [
+      { key: 'page-0', rows: [], messageIds: ['m0'], estimatedHeight: 4000 },
+      { key: 'page-1', rows: [], messageIds: ['m1'], estimatedHeight: 1000 },
+      { key: 'page-2', rows: [], messageIds: ['m2'], estimatedHeight: 1000 },
+      { key: 'page-3', rows: [], messageIds: ['m3'], estimatedHeight: 1000 },
+    ]
+
+    const range = computeExpandedPageRange({
+      pages,
+      measuredPageHeights: { 'page-0': 78312 },
+      scrollOffsetFromBottom: 0,
+      viewportHeight: 900,
+      adjacentPageCount: 3,
+    })
+
+    expect(range).toEqual({ startIndex: 0, endIndex: 3 })
   })
 
   it('keeps adjacent pages mounted near a page boundary', () => {
@@ -798,6 +984,44 @@ describe('lightweight render selection', () => {
     })
 
     expect(Array.from(selection)).toEqual([1, 4])
+  })
+
+  it('retains recently expanded pages until they leave the hysteresis range', () => {
+    const first = buildRetainedPageKeys({
+      pages,
+      expandedRange: { startIndex: 0, endIndex: 2 },
+      previousPageKeys: new Set(),
+      retentionPageCount: 2,
+    })
+    const next = buildRetainedPageKeys({
+      pages,
+      expandedRange: { startIndex: 3, endIndex: 4 },
+      previousPageKeys: first,
+      retentionPageCount: 2,
+    })
+
+    expect([...next]).toEqual(['page-3', 'page-4', 'page-1', 'page-2'])
+    expect(next.has('page-0')).toBe(false)
+  })
+
+  it('prefetches at the page reserve and blocks retries for an unchanged page version', () => {
+    expect(shouldPrefetchHistory(pages.length, 0, 3)).toBe(false)
+    expect(shouldPrefetchHistory(pages.length, 1, 3)).toBe(true)
+
+    const firstKey = buildHistoryPrefetchAttemptKey('session-1', pages)
+    const sameKeyAfterRangeChange = buildHistoryPrefetchAttemptKey('session-1', pages)
+    const sameKeyAfterBoundaryGrowth = buildHistoryPrefetchAttemptKey('session-1', [
+      ...pages.slice(0, -1),
+      { ...pages.at(-1)!, messageIds: ['m4-older', ...pages.at(-1)!.messageIds] },
+    ])
+    const nextKey = buildHistoryPrefetchAttemptKey('session-1', [
+      ...pages,
+      { key: 'page-5', rows: [], messageIds: ['m5'], estimatedHeight: 150 },
+    ])
+
+    expect(sameKeyAfterRangeChange).toBe(firstKey)
+    expect(sameKeyAfterBoundaryGrowth).toBe(firstKey)
+    expect(nextKey).not.toBe(firstKey)
   })
 })
 

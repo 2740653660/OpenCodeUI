@@ -336,7 +336,10 @@ export const ChatPane = memo(function ChatPane({
         : '',
     ].filter(Boolean)
 
-    const responseBody = [lines.join('\n'), activeServerHealth.details ? `Raw diagnostics:\n${activeServerHealth.details}` : '']
+    const responseBody = [
+      lines.join('\n'),
+      activeServerHealth.details ? `Raw diagnostics:\n${activeServerHealth.details}` : '',
+    ]
       .filter(Boolean)
       .join('\n\n')
 
@@ -803,6 +806,7 @@ export const ChatPane = memo(function ChatPane({
               turnUserStartMap={chatPageViewModel.turnUserStartMap}
               turnLatestAssistantIds={chatPageViewModel.turnLatestAssistantIds}
               sessionId={routeSessionId}
+              isStreaming={isStreaming}
               allowStreamingLayoutAnimation={isAtBottom}
               loadState={renderedLoadState}
               loadError={loadError}

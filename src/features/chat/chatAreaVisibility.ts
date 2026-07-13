@@ -1,6 +1,22 @@
 import type { Message, Part } from '../../types/message'
 import { hasRenderableParts, isAbortedMessage, isVisibleReasoningPart, isVisibleTextPart } from '../../types/message'
 
+export function findActiveTurnAssistantId(messages: Message[], isStreaming: boolean): string | null {
+  if (!isStreaming) return null
+
+  let latestUserIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].info.role === 'user') {
+      latestUserIndex = index
+      break
+    }
+  }
+  for (let index = messages.length - 1; index > latestUserIndex; index -= 1) {
+    if (messages[index].info.role === 'assistant') return messages[index].info.id
+  }
+  return null
+}
+
 function messageHasContent(message: Message): boolean {
   const hasRenderable = hasRenderableParts(message)
   // 有非 abort 错误的助手消息始终可见（展示错误信息）。
