@@ -1042,7 +1042,9 @@ export const ChatArea = memo(
           <div
             ref={setScrollContainerRef}
             data-chat-scroll-root="true"
-            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col-reverse [overflow-anchor:none]"
+            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col-reverse"
+            // Keep the visible history anchored while streaming content grows below it.
+            style={{ overflowAnchor: 'auto' }}
           >
             <div className="flex-1" />
 
