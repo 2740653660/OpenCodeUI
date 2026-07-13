@@ -62,7 +62,7 @@ export interface LockScrollAroundAnchorOptions {
  * 展开/收起时把锚点（通常是折叠 header）钉在视口原位置。
  *
  * 内容仍按正常文档流生长，不改 position。
- * 聊天流是 flex-col-reverse，高度变化会默认钉底部，这里只补偿 scrollTop。
+ * 聊天流现为正向 flex-col；高度变化时补偿 scrollTop 钉住折叠 header。
  * ResizeObserver 跟高度；出现过漂移后，高度连续稳定若干帧再松手；用户手滚立刻松手。
  */
 export function lockScrollAroundAnchor(

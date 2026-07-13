@@ -2,13 +2,11 @@
 // ChatArea - 聊天消息显示区域
 // ============================================
 //
-// 这版使用粗颗粒页块级虚拟化：
+// 这版使用粗颗粒页块级虚拟化 + 正向 flex-col：
 // - 消息以 20 条为主分块，渲染重量只限制极端页面
-// - 视口附近少量页保持真实 DOM
-// - 远页折叠成固定高度块，优先使用实测高度，未测量时使用保守估算
-//
-// 这样滚动链路里不会出现“正在眼前从假高度变真高度的 message”，
-// 手感比消息级壳切换稳定得多，同时 DOM 数量也有上限。
+// - 视口附近少量页保持真实 DOM；远页折叠成固定高度块
+// - pages[0]=最新，渲染时倒序，视觉上旧→新
+// - 贴底时 ResizeObserver 钉 scrollTop，流式自然跟底
 
 import {
   useRef,
@@ -58,6 +56,27 @@ const LOAD_MORE_ANCHOR_SETTLE_MS = 600
 const LOAD_MORE_ANCHOR_FALLBACK_MS = 5000
 const PENDING_SCROLL_TARGET_KEEPALIVE_MS = 900
 const ADJACENT_PAGE_PRELOAD_VIEWPORTS = 12
+/** 跟流阈值：比 UI 贴底阈值更紧，避免轻微上滚仍被拽回 */
+const STICK_FOLLOW_THRESHOLD_PX = 24
+
+/** 正向 column：距底部距离 */
+function getDistanceFromBottom(root: HTMLElement) {
+  return Math.max(0, root.scrollHeight - root.clientHeight - root.scrollTop)
+}
+
+function getDistanceFromTop(root: HTMLElement) {
+  return Math.max(0, root.scrollTop)
+}
+
+function scrollRootToBottom(root: HTMLElement, behavior: ScrollBehavior = 'auto') {
+  const top = Math.max(0, root.scrollHeight - root.clientHeight)
+  if (behavior === 'smooth') root.scrollTo({ top, behavior })
+  else root.scrollTop = top
+}
+
+function isStuckToBottom(root: HTMLElement, threshold = STICK_FOLLOW_THRESHOLD_PX) {
+  return getDistanceFromBottom(root) <= threshold
+}
 
 type LoadMoreAnchorSnapshot = {
   messageId: string
@@ -186,6 +205,7 @@ export const ChatArea = memo(
     ) => {
       const { t } = useTranslation('chat')
       const scrollRef = useRef<HTMLDivElement>(null)
+      const chatContentRef = useRef<HTMLDivElement>(null)
       const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
       const topSentinelRef = useRef<HTMLDivElement>(null)
       const isAtBottomRef = useRef(true)
@@ -434,7 +454,7 @@ export const ChatArea = memo(
           const liveRoot = scrollRef.current
           if (!liveRoot) return
 
-          const liveOffset = Math.abs(liveRoot.scrollTop)
+          const liveOffset = getDistanceFromBottom(liveRoot)
           const previousOffset = scrollOffsetFromBottomRef.current
           if (Math.abs(liveOffset - previousOffset) < 1) return
 
@@ -504,8 +524,8 @@ export const ChatArea = memo(
 
         const onScroll = () => {
           const hasOverflow = root.scrollHeight > root.clientHeight + 1
-          const distFromBottom = Math.abs(root.scrollTop)
-          const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - distFromBottom)
+          const distFromBottom = getDistanceFromBottom(root)
+          const distFromTop = getDistanceFromTop(root)
           const atBottom = !hasOverflow || distFromBottom <= atBottomThreshold
           const previous = isAtBottomRef.current
           isAtBottomRef.current = atBottom
@@ -527,13 +547,14 @@ export const ChatArea = memo(
           if (pendingLoadMoreAnchorRef.current && !isLoadingRef.current) {
             releasePendingLoadMoreAnchor()
           }
-          const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop))
+          const distFromTop = getDistanceFromTop(root)
           loadMoreIntentAnchorRef.current = distFromTop <= 1 ? captureLoadMoreAnchor(root) : null
           loadMoreBlockedRef.current = false
           tryLoadMoreRef.current()
         }
 
         const onWheel = (event: WheelEvent) => {
+          // 正向：deltaY < 0 往上看更老；deltaY > 0 往下贴底
           if (event.deltaY > 0) {
             releasePendingLoadMoreAnchor()
             return
@@ -565,29 +586,30 @@ export const ChatArea = memo(
         let scrollbarStartOffset: number | null = null
 
         const onTouchStart = () => {
-          touchStartOffset = Math.abs(root.scrollTop)
+          touchStartOffset = getDistanceFromBottom(root)
         }
 
         const onTouchEnd = () => {
           if (touchStartOffset === null) return
           const startOffset = touchStartOffset
           touchStartOffset = null
-          const nextOffset = Math.abs(root.scrollTop)
+          const nextOffset = getDistanceFromBottom(root)
+          // 距底变大 = 往上翻历史
           if (nextOffset > startOffset + 1) onOlderScrollIntent()
           else if (nextOffset < startOffset - 1) releasePendingLoadMoreAnchor()
-          else if (root.scrollHeight - root.clientHeight - nextOffset <= 1) onOlderScrollIntent()
+          else if (getDistanceFromTop(root) <= 1) onOlderScrollIntent()
         }
 
         const onPointerDown = (event: PointerEvent) => {
           const rect = root.getBoundingClientRect()
-          if (event.clientX >= rect.right - 24) scrollbarStartOffset = Math.abs(root.scrollTop)
+          if (event.clientX >= rect.right - 24) scrollbarStartOffset = getDistanceFromBottom(root)
         }
 
         const onPointerUp = () => {
           if (scrollbarStartOffset === null) return
           const startOffset = scrollbarStartOffset
           scrollbarStartOffset = null
-          const nextOffset = Math.abs(root.scrollTop)
+          const nextOffset = getDistanceFromBottom(root)
           if (nextOffset > startOffset + 1) onOlderScrollIntent()
           else if (nextOffset < startOffset - 1) releasePendingLoadMoreAnchor()
         }
@@ -637,7 +659,7 @@ export const ChatArea = memo(
         requestAnimationFrame(() => {
           const root = scrollRef.current
           if (!root) return
-          root.scrollTop = 0
+          scrollRootToBottom(root)
           updateScrollOffsetSnapshot()
           animate(root, { opacity: [0, 1] }, { duration: 0.2, ease: 'easeOut' })
         })
@@ -659,11 +681,31 @@ export const ChatArea = memo(
         requestAnimationFrame(() => {
           const root = scrollRef.current
           if (root && isAtBottomRef.current) {
-            root.scrollTop = 0
+            scrollRootToBottom(root)
             updateScrollOffsetSnapshot()
           }
         })
       }, [loadState, updateScrollOffsetSnapshot])
+
+      // 贴底跟流：只观察消息内容壳。内容长高时若仍在跟流阈值内，钉到底。
+      useEffect(() => {
+        const root = scrollRoot
+        const content = chatContentRef.current
+        if (!root || !content || typeof ResizeObserver === 'undefined') return
+
+        const pinIfNeeded = () => {
+          // 用户已明显离开底部时不跟；阈值比 UI 贴底更紧
+          if (!isStuckToBottom(root)) return
+          const before = root.scrollTop
+          scrollRootToBottom(root)
+          // 已在底且没真正滚动时，少打一次 offset setState
+          if (Math.abs(root.scrollTop - before) >= 1) updateScrollOffsetSnapshot()
+        }
+
+        const ro = new ResizeObserver(pinIfNeeded)
+        ro.observe(content)
+        return () => ro.disconnect()
+      }, [scrollRoot, sessionId, updateScrollOffsetSnapshot, visibleMessages.length])
 
       const tryLoadMore = useCallback(() => {
         if (isLoadingRef.current) return
@@ -672,7 +714,7 @@ export const ChatArea = memo(
 
         const root = scrollRef.current
         if (!root) return
-        const distFromTop = Math.max(0, root.scrollHeight - root.clientHeight - Math.abs(root.scrollTop))
+        const distFromTop = getDistanceFromTop(root)
         if (distFromTop > LOAD_MORE_ANCHOR_CAPTURE_PX) return
 
         const fn = loadMoreRef.current
@@ -908,8 +950,11 @@ export const ChatArea = memo(
           const targetPageIndex = activePages.findIndex(page => page.messageIds.includes(messageId))
           if (targetPageIndex === -1) return
 
+          // pages[0]=最新在底：距顶 = 总高 - 页底偏移
           const pageOffsets = buildPageOffsets(activePages, measuredPageHeights)
-          root.scrollTo({ top: -pageOffsets[targetPageIndex], behavior: behavior === 'smooth' ? 'auto' : behavior })
+          const total = pageOffsets[pageOffsets.length - 1] ?? 0
+          const top = Math.max(0, total - pageOffsets[targetPageIndex + 1])
+          root.scrollTo({ top, behavior: behavior === 'smooth' ? 'auto' : behavior })
           updateScrollOffsetSnapshot()
           settlingScrollMessageIdRef.current = null
           clearPendingScrollTimer()
@@ -924,13 +969,13 @@ export const ChatArea = memo(
           scrollToBottom: (instant = false) => {
             const root = scrollRef.current
             if (!root) return
-            root.scrollTo({ top: 0, behavior: instant ? 'auto' : 'smooth' })
+            scrollRootToBottom(root, instant ? 'auto' : 'smooth')
           },
           scrollToBottomIfAtBottom: () => {
             const root = scrollRef.current
             if (!root) return
-            if (Math.abs(root.scrollTop) > 2) return
-            root.scrollTop = 0
+            if (!isStuckToBottom(root, STICK_FOLLOW_THRESHOLD_PX)) return
+            scrollRootToBottom(root)
           },
           scrollToLastMessage: () => {
             if (visibleMessages.length === 0) return
@@ -962,69 +1007,12 @@ export const ChatArea = memo(
           <div
             ref={setScrollContainerRef}
             data-chat-scroll-root="true"
-            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col-reverse"
+            className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar contain-content flex flex-col"
           >
-            <div className="flex-1" />
+            {/* 正向：顶 = 更老历史；底 = 最新 + 输入区占位 */}
+            <div ref={topSentinelRef} className="h-px shrink-0" aria-hidden="true" />
+            <div className="mobile-chat-top-spacer shrink-0" />
 
-            <div
-              className="shrink-0"
-              style={{
-                height: bottomPadding > 0 ? `${bottomPadding + 48}px` : '256px',
-              }}
-            />
-
-            {retryStatus && (
-              <div className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} shrink-0`}>
-                <div className="flex justify-start">
-                  <div className="w-full min-w-0">
-                    <RetryStatusInline status={retryStatus} />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {visibleMessages.length === 0 && (loadError || connectionError) && (
-              <div className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} shrink-0`}>
-                <div className="flex justify-start">
-                  <div className="w-full min-w-0 space-y-2">
-                    <MessageErrorView error={loadError ?? connectionError!} />
-                    {connectionError && onOpenSettings && (
-                      <button
-                        type="button"
-                        onClick={onOpenSettings}
-                        className="rounded-md border border-border-200 bg-bg-100 px-3 py-1.5 text-[length:var(--fs-sm)] text-text-200 transition-colors hover:bg-bg-200"
-                      >
-                        Open server settings
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {renderSegments.map(segment =>
-              segment.kind === 'expanded' ? (
-                <PageBlock
-                  key={segment.key}
-                  page={segment.page}
-                  messageMaxWidthClass={messageMaxWidthClass}
-                  messagePaddingClass={messagePaddingClass}
-                  registerMessage={registerMessage}
-                  onUndo={onUndo}
-                  onFork={onFork}
-                  canUndo={canUndo}
-                  turnDurationMap={localTurnDurationMap}
-                  turnLatestAssistantIds={localTurnLatestAssistantIds}
-                  forkTargetIdMap={localForkTargetIdMap}
-                  allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
-                  onMeasuredHeightChange={updateMeasuredPageHeight}
-                />
-              ) : (
-                <CollapsedPagesBlock key={segment.key} height={segment.height} />
-              ),
-            )}
-
-            {/* 加载指示不占文档流高度，避免 history prepend 时顶栏插拔抖动 */}
             {visibleMessages.length > 0 && isLoadingMore && (
               <div className="relative shrink-0 h-0 overflow-visible pointer-events-none" aria-hidden="true">
                 <div className="absolute left-0 right-0 top-2 z-10 flex justify-center">
@@ -1036,8 +1024,70 @@ export const ChatArea = memo(
               </div>
             )}
 
-            <div className="mobile-chat-top-spacer shrink-0" />
-            <div ref={topSentinelRef} className="h-px shrink-0" aria-hidden="true" />
+            {/* 短会话顶上 flex-1，内容沉底 */}
+            <div className="flex-1 shrink-0 min-h-0" aria-hidden="true" />
+
+            {/* 消息内容壳：贴底跟流只观察这一层的高度变化 */}
+            <div ref={chatContentRef} className="shrink-0 w-full">
+              {/* pages[0]=最新：倒序渲染 → 视觉上旧→新 */}
+              {[...renderSegments].reverse().map(segment =>
+                segment.kind === 'expanded' ? (
+                  <PageBlock
+                    key={segment.key}
+                    page={segment.page}
+                    messageMaxWidthClass={messageMaxWidthClass}
+                    messagePaddingClass={messagePaddingClass}
+                    registerMessage={registerMessage}
+                    onUndo={onUndo}
+                    onFork={onFork}
+                    canUndo={canUndo}
+                    turnDurationMap={localTurnDurationMap}
+                    turnLatestAssistantIds={localTurnLatestAssistantIds}
+                    forkTargetIdMap={localForkTargetIdMap}
+                    allowStreamingLayoutAnimation={allowStreamingLayoutAnimation}
+                    onMeasuredHeightChange={updateMeasuredPageHeight}
+                  />
+                ) : (
+                  <CollapsedPagesBlock key={segment.key} height={segment.height} />
+                ),
+              )}
+
+              {visibleMessages.length === 0 && (loadError || connectionError) && (
+                <div className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} shrink-0`}>
+                  <div className="flex justify-start">
+                    <div className="w-full min-w-0 space-y-2">
+                      <MessageErrorView error={loadError ?? connectionError!} />
+                      {connectionError && onOpenSettings && (
+                        <button
+                          type="button"
+                          onClick={onOpenSettings}
+                          className="rounded-md border border-border-200 bg-bg-100 px-3 py-1.5 text-[length:var(--fs-sm)] text-text-200 transition-colors hover:bg-bg-200"
+                        >
+                          Open server settings
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {retryStatus && (
+                <div className={`w-full ${messageMaxWidthClass} mx-auto ${messagePaddingClass} shrink-0`}>
+                  <div className="flex justify-start">
+                    <div className="w-full min-w-0">
+                      <RetryStatusInline status={retryStatus} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div
+              className="shrink-0"
+              style={{
+                height: bottomPadding > 0 ? `${bottomPadding + 48}px` : '256px',
+              }}
+            />
           </div>
         </div>
       )
