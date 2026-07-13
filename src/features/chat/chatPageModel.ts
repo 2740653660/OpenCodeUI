@@ -4,6 +4,8 @@ export const PAGE_MESSAGE_COUNT = 20
 export const PAGE_EXTREME_RENDER_WEIGHT = 700
 export const PAGE_OVERSCAN_VIEWPORTS = 2
 export const PAGE_ADJACENT_OVERSCAN = 1
+/** 过程折叠时按 row 数（折叠块数）分页，一个折叠块算一条 */
+export const PAGE_ROW_COUNT_FOR_COLLAPSE = 25
 
 export interface MessageGroupRow {
   key: string
@@ -222,6 +224,7 @@ export function buildChatPages(
   messages: Message[],
   pageMessageCount = PAGE_MESSAGE_COUNT,
   maxRenderWeight = PAGE_EXTREME_RENDER_WEIGHT,
+  rowCountLimit = pageMessageCount,
 ): ChatPage[] {
   const rows = splitOversizedMessageGroups(buildMessageGroups(messages), pageMessageCount, maxRenderWeight)
   const renderPages: ChatPage[] = []
@@ -235,7 +238,10 @@ export function buildChatPages(
     // 切页条件：当前页非空 + 超限。但 continuesFromPrevious 的 row 不能开始新页——
     // 它是上一 row 的续接（同一回合被 splitOversizedMessageGroups 切开），
     // 分到不同 page 会导致过程折叠块跨页。
+    // rowCountLimit 默认等于 pageMessageCount；过程折叠时可传 PAGE_ROW_COUNT_FOR_COLLAPSE
+    // 让分页按折叠块数（row 数）而非物理消息数计算。
     const wouldExceedLimit =
+      currentRows.length + 1 > rowCountLimit ||
       currentMessageCount + row.messages.length > pageMessageCount ||
       currentRenderWeight + rowRenderWeight > maxRenderWeight
     if (currentRows.length > 0 && wouldExceedLimit && !row.continuesFromPrevious) {
@@ -304,16 +310,18 @@ export function buildStableChatPages(
   allocateKey: (page: ChatPage) => string,
   pageMessageCount = PAGE_MESSAGE_COUNT,
   maxRenderWeight = PAGE_EXTREME_RENDER_WEIGHT,
+  rowCountLimit = pageMessageCount,
 ): StableChatPage[] {
-  return buildChatPages(messages, pageMessageCount, maxRenderWeight).map(page => ({ ...page, key: allocateKey(page) }))
+  return buildChatPages(messages, pageMessageCount, maxRenderWeight, rowCountLimit).map(page => ({ ...page, key: allocateKey(page) }))
 }
 
 export function buildContentKeyedChatPages(
   messages: Message[],
   pageMessageCount = PAGE_MESSAGE_COUNT,
   maxRenderWeight = PAGE_EXTREME_RENDER_WEIGHT,
+  rowCountLimit = pageMessageCount,
 ): StableChatPage[] {
-  return buildChatPages(messages, pageMessageCount, maxRenderWeight)
+  return buildChatPages(messages, pageMessageCount, maxRenderWeight, rowCountLimit)
 }
 
 function flattenPageMessagesChronological(page: ChatPage): Message[] {
@@ -382,20 +390,22 @@ export function reconcileStableChatPages(options: {
   allocateKey: (page: ChatPage) => string
   pageMessageCount?: number
   maxRenderWeight?: number
+  rowCountLimit?: number
 }): StableChatPage[] {
   const { currentPages, nextMessages, allocateKey } = options
   const pageMessageCount = options.pageMessageCount ?? PAGE_MESSAGE_COUNT
   const maxRenderWeight = options.maxRenderWeight ?? PAGE_EXTREME_RENDER_WEIGHT
+  const rowCountLimit = options.rowCountLimit ?? pageMessageCount
   if (nextMessages.length === 0) return []
   if (currentPages.length === 0) {
-    return buildStableChatPages(nextMessages, allocateKey, pageMessageCount, maxRenderWeight)
+    return buildStableChatPages(nextMessages, allocateKey, pageMessageCount, maxRenderWeight, rowCountLimit)
   }
 
   const previousIds = flattenPagesMessageIdsChronological(currentPages)
   const nextIds = nextMessages.map(message => message.info.id)
   const offset = findMessageSequenceOffset(nextIds, previousIds)
   if (offset === -1) {
-    return buildStableChatPages(nextMessages, allocateKey, pageMessageCount, maxRenderWeight)
+    return buildStableChatPages(nextMessages, allocateKey, pageMessageCount, maxRenderWeight, rowCountLimit)
   }
 
   const nextById = new Map(nextMessages.map(message => [message.info.id, message]))
@@ -426,7 +436,7 @@ export function reconcileStableChatPages(options: {
       const combinedPage = buildChatPage(combinedRows)
       nextPages = [{ ...combinedPage, key: newestPage.key }, ...refreshedPages.slice(1)]
     } else {
-      let appendedPages = buildStableChatPages(suffixMessages, allocateKey, pageMessageCount, maxRenderWeight)
+      let appendedPages = buildStableChatPages(suffixMessages, allocateKey, pageMessageCount, maxRenderWeight, rowCountLimit)
       let continuedNewestPage = newestPage
       const boundaryPage = appendedPages.at(-1)
       const connection = newestPage && boundaryPage ? connectAssistantPageBoundary(newestPage, boundaryPage) : null

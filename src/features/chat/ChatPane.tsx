@@ -20,6 +20,7 @@ import { useCancelHint } from '../../hooks/useCancelHint'
 import { InlineToolRequestContext, type InlineToolRequestContextValue } from './InlineToolRequestContext'
 import { ChatViewportProvider, canUseSplitPane, useChatViewportMaybe, type ChatViewportValue } from './chatViewport'
 import { useChatPageViewModel } from './useChatPageViewModel'
+import { PAGE_ROW_COUNT_FOR_COLLAPSE } from './chatPageModel'
 import { SessionNavigationContext } from '../../contexts/SessionNavigationContext'
 import { paneLayoutStore } from '../../store/paneLayoutStore'
 import { autoApproveStore } from '../../store/autoApproveStore'
@@ -306,7 +307,9 @@ export const ChatPane = memo(function ChatPane({
   const isRenderingDeferredMessages = renderedMessages !== messages
   const renderedLoadState = loadState === 'loaded' && isRenderingDeferredMessages ? 'loading' : loadState
   const inputDisabled = !!routeSessionId && loadState === 'error' && messages.length === 0
-  const chatPageViewModel = useChatPageViewModel(renderedMessages)
+  const { processCollapseEnabled: processCollapseEnabledEarly } = useTheme()
+  const rowCountLimit = processCollapseEnabledEarly ? PAGE_ROW_COUNT_FOR_COLLAPSE : undefined
+  const chatPageViewModel = useChatPageViewModel(renderedMessages, rowCountLimit)
 
   const connectionError = useMemo<MessageError | undefined>(() => {
     if (!activeServer) {
