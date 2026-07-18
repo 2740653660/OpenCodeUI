@@ -181,7 +181,7 @@ function ProviderDetail({
       <button
         type="button"
         onClick={() => enter({ id: 'models', title: tx('models', '模型', lang) })}
-        className="group flex w-full items-center gap-3 rounded-xl border border-border-200/55 bg-bg-050/55 px-3.5 py-3 text-left transition-colors hover:bg-bg-100/50"
+        className="group flex w-full items-center gap-3 rounded-xl border border-border-200/55 bg-bg-100/55 px-3.5 py-3 text-left transition-colors hover:bg-bg-200/50"
       >
         <div className="min-w-0 flex-1">
           <div className="font-mono text-[length:var(--fs-sm)] font-medium text-text-100">models</div>

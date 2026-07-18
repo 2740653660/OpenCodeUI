@@ -1,10 +1,22 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PathAutoIcon, PathUnixIcon, PathWindowsIcon } from '../../../components/Icons'
-import { usePathMode, useIsMobile, useTheme } from '../../../hooks'
+import { usePathMode, useTheme } from '../../../hooks'
 import { themeStore, type ReasoningDisplayMode, type CompletedAtFormat } from '../../../store/themeStore'
-import { Toggle, SegmentedControl, SettingRow, SettingsSection } from './SettingsUI'
+import { Toggle, SegmentedControl, SettingRow, SettingField, SettingsSection } from './SettingsUI'
 import type { PathMode } from '../../../utils/directoryUtils'
+
+const STEP_FINISH_FIELDS = [
+  { key: 'latestOnly', label: 'chat.latestOnly', desc: 'chat.showLatestOnly' },
+  { key: 'agent', label: 'chat.agent', desc: 'chat.showAgent' },
+  { key: 'model', label: 'chat.model', desc: 'chat.showModel' },
+  { key: 'tokens', label: 'chat.tokens', desc: 'chat.showTokenUsage' },
+  { key: 'cache', label: 'chat.cache', desc: 'chat.showCacheHit' },
+  { key: 'cost', label: 'chat.cost', desc: 'chat.showApiCost' },
+  { key: 'duration', label: 'chat.duration', desc: 'chat.showResponseTime' },
+  { key: 'turnDuration', label: 'chat.totalDuration', desc: 'chat.showTurnElapsed' },
+  { key: 'completedAt', label: 'chat.completedAt', desc: 'chat.showCompletedAt' },
+] as const
 
 export function ChatSettings() {
   const { t } = useTranslation(['settings'])
@@ -25,185 +37,151 @@ export function ChatSettings() {
   const [stepFinishDisplay, setStepFinishDisplay] = useState(themeStore.stepFinishDisplay)
   const [completedAtFormat, setCompletedAtFormat] = useState(themeStore.completedAtFormat)
   const [reasoningDisplayMode, setReasoningDisplayMode] = useState(themeStore.reasoningDisplayMode)
-  const isMobile = useIsMobile()
-  void isMobile
 
-  const handleCollapseToggle = () => {
+  const externalDropAlwaysMention = externalFileDropMode === 'mention'
+
+  const toggleCollapse = () => {
     const v = !collapseUserMessages
     setCollapseUserMessages(v)
     themeStore.setCollapseUserMessages(v)
   }
 
-  const handleRenderUserMarkdownToggle = () => {
-    setRenderUserMarkdown(!renderUserMarkdown)
-  }
-
-  const handleReasoningDisplayModeChange = (mode: ReasoningDisplayMode) => {
-    setReasoningDisplayMode(mode)
-    themeStore.setReasoningDisplayMode(mode)
-  }
-
-  const externalDropAlwaysMention = externalFileDropMode === 'mention'
-  const handleExternalDropModeToggle = () => {
-    setExternalFileDropMode(externalDropAlwaysMention ? 'upload-first' : 'mention')
-  }
-
-  const handleOutlineHighlightToggle = () => {
-    setOutlineCurrentHighlight(!outlineCurrentHighlight)
-  }
-
-  const handleActionsOnLatestOnlyToggle = () => {
-    setActionsOnLatestAssistantOnly(!actionsOnLatestAssistantOnly)
-  }
-
-  const handleDesktopCollapsedInputDockToggle = () => {
-    setDesktopCollapsedInputDock(!desktopCollapsedInputDock)
+  const toggleStepField = (key: (typeof STEP_FINISH_FIELDS)[number]['key']) => {
+    const next = { [key]: !stepFinishDisplay[key] }
+    setStepFinishDisplay(prev => ({ ...prev, ...next }))
+    themeStore.setStepFinishDisplay(next)
   }
 
   return (
     <div>
-      {/* 路径格式 */}
-      <SettingsSection title={t('chat.pathsFormatting')}>
-        <p className="text-[length:var(--fs-sm)] text-text-400">{t('chat.pathsFormattingDesc')}</p>
-        <SegmentedControl
-          value={pathMode}
-          options={[
-            { value: 'auto', label: t('chat.auto'), icon: <PathAutoIcon size={14} /> },
-            { value: 'unix', label: t('chat.unixSlash'), icon: <PathUnixIcon size={14} /> },
-            { value: 'windows', label: t('chat.winBackslash'), icon: <PathWindowsIcon size={14} /> },
-          ]}
-          onChange={v => setPathMode(v as PathMode)}
-        />
-        {isAutoMode && (
-          <p className="text-[length:var(--fs-xs)] text-text-400">
-            {t('chat.usingStyle', { style: effectiveStyle === 'windows' ? '\\' : '/' })}
-            {detectedStyle &&
-              t('chat.detectedStyle', {
-                style: detectedStyle === 'windows' ? t('chat.windows') : t('chat.unix'),
-              })}
-          </p>
-        )}
+      <SettingsSection title={t('chat.pathsFormatting')} description={t('chat.pathsFormattingDesc')}>
+        <div>
+          <div className="w-full max-w-[320px]">
+            <SegmentedControl
+              value={pathMode}
+              options={[
+                { value: 'auto', label: t('chat.auto'), icon: <PathAutoIcon size={14} /> },
+                { value: 'unix', label: t('chat.unixSlash'), icon: <PathUnixIcon size={14} /> },
+                { value: 'windows', label: t('chat.winBackslash'), icon: <PathWindowsIcon size={14} /> },
+              ]}
+              onChange={v => setPathMode(v as PathMode)}
+            />
+          </div>
+          {isAutoMode && (
+            <p className="text-[length:var(--fs-sm)] text-text-400 mt-2">
+              {t('chat.usingStyle', { style: effectiveStyle === 'windows' ? '\\' : '/' })}
+              {detectedStyle &&
+                ` · ${t('chat.detectedStyle', {
+                  style: detectedStyle === 'windows' ? t('chat.windows') : t('chat.unix'),
+                })}`}
+            </p>
+          )}
+        </div>
 
         <SettingRow
           label={t('chat.externalDropMentionMode')}
           description={t('chat.externalDropMentionModeDesc')}
-          onClick={handleExternalDropModeToggle}
+          onClick={() => setExternalFileDropMode(externalDropAlwaysMention ? 'upload-first' : 'mention')}
         >
-          <Toggle enabled={externalDropAlwaysMention} onChange={handleExternalDropModeToggle} />
+          <Toggle
+            enabled={externalDropAlwaysMention}
+            onChange={() => setExternalFileDropMode(externalDropAlwaysMention ? 'upload-first' : 'mention')}
+          />
         </SettingRow>
       </SettingsSection>
 
-      <SettingsSection title={t('chat.conversationExperience')}>
-        <p className="text-[length:var(--fs-sm)] text-text-400">{t('chat.conversationExperienceDesc')}</p>
-
+      <SettingsSection title={t('chat.conversationExperience')} description={t('chat.conversationExperienceDesc')}>
         <SettingRow
           label={t('chat.collapseLongMessages')}
           description={t('chat.collapseLongMessagesDesc')}
-          onClick={handleCollapseToggle}
+          onClick={toggleCollapse}
         >
-          <Toggle enabled={collapseUserMessages} onChange={handleCollapseToggle} />
+          <Toggle enabled={collapseUserMessages} onChange={toggleCollapse} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.renderUserMarkdown')}
           description={t('chat.renderUserMarkdownDesc')}
-          onClick={handleRenderUserMarkdownToggle}
+          onClick={() => setRenderUserMarkdown(!renderUserMarkdown)}
         >
-          <Toggle enabled={renderUserMarkdown} onChange={handleRenderUserMarkdownToggle} />
+          <Toggle enabled={renderUserMarkdown} onChange={() => setRenderUserMarkdown(!renderUserMarkdown)} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.outlineCurrentHighlight')}
           description={t('chat.outlineCurrentHighlightDesc')}
-          onClick={handleOutlineHighlightToggle}
+          onClick={() => setOutlineCurrentHighlight(!outlineCurrentHighlight)}
         >
-          <Toggle enabled={outlineCurrentHighlight} onChange={handleOutlineHighlightToggle} />
+          <Toggle
+            enabled={outlineCurrentHighlight}
+            onChange={() => setOutlineCurrentHighlight(!outlineCurrentHighlight)}
+          />
         </SettingRow>
 
         <SettingRow
           label={t('chat.actionsOnLatestAssistantOnly')}
           description={t('chat.actionsOnLatestAssistantOnlyDesc')}
-          onClick={handleActionsOnLatestOnlyToggle}
+          onClick={() => setActionsOnLatestAssistantOnly(!actionsOnLatestAssistantOnly)}
         >
-          <Toggle enabled={actionsOnLatestAssistantOnly} onChange={handleActionsOnLatestOnlyToggle} />
+          <Toggle
+            enabled={actionsOnLatestAssistantOnly}
+            onChange={() => setActionsOnLatestAssistantOnly(!actionsOnLatestAssistantOnly)}
+          />
         </SettingRow>
 
         <SettingRow
           label={t('chat.desktopCollapsedInputDock')}
           description={t('chat.desktopCollapsedInputDockDesc')}
-          onClick={handleDesktopCollapsedInputDockToggle}
+          onClick={() => setDesktopCollapsedInputDock(!desktopCollapsedInputDock)}
         >
-          <Toggle enabled={desktopCollapsedInputDock} onChange={handleDesktopCollapsedInputDockToggle} />
+          <Toggle
+            enabled={desktopCollapsedInputDock}
+            onChange={() => setDesktopCollapsedInputDock(!desktopCollapsedInputDock)}
+          />
         </SettingRow>
 
-        <div>
-          <p className="text-[length:var(--fs-md)] text-text-100 mb-1.5">{t('chat.thinkingDisplay')}</p>
-          <p className="text-[length:var(--fs-sm)] text-text-400 mb-3">{t('chat.thinkingDisplayDesc')}</p>
-          <SegmentedControl
-            value={reasoningDisplayMode}
-            options={[
-              { value: 'capsule', label: t('chat.capsule') },
-              { value: 'italic', label: t('chat.italic') },
-              { value: 'markdown', label: t('chat.markdown') },
-            ]}
-            onChange={v => handleReasoningDisplayModeChange(v as ReasoningDisplayMode)}
-          />
-        </div>
-      </SettingsSection>
-
-      {/* Step 完成信息 */}
-      <SettingsSection title={t('chat.stepFinishInfo')}>
-        {(
-          [
-            { key: 'latestOnly', label: t('chat.latestOnly'), desc: t('chat.showLatestOnly') },
-            { key: 'agent', label: t('chat.agent'), desc: t('chat.showAgent') },
-            { key: 'model', label: t('chat.model'), desc: t('chat.showModel') },
-            { key: 'tokens', label: t('chat.tokens'), desc: t('chat.showTokenUsage') },
-            { key: 'cache', label: t('chat.cache'), desc: t('chat.showCacheHit') },
-            { key: 'cost', label: t('chat.cost'), desc: t('chat.showApiCost') },
-            { key: 'duration', label: t('chat.duration'), desc: t('chat.showResponseTime') },
-            { key: 'turnDuration', label: t('chat.totalDuration'), desc: t('chat.showTurnElapsed') },
-            { key: 'completedAt', label: t('chat.completedAt'), desc: t('chat.showCompletedAt') },
-          ] as const
-        ).map(({ key, label, desc }) => (
-          <SettingRow
-            key={key}
-            label={label}
-            description={desc}
-            onClick={() => {
-              const next = { [key]: !stepFinishDisplay[key] }
-              setStepFinishDisplay(prev => ({ ...prev, ...next }))
-              themeStore.setStepFinishDisplay(next)
-            }}
-          >
-            <Toggle
-              enabled={stepFinishDisplay[key]}
-              onChange={() => {
-                const next = { [key]: !stepFinishDisplay[key] }
-                setStepFinishDisplay(prev => ({ ...prev, ...next }))
-                themeStore.setStepFinishDisplay(next)
+        <SettingField label={t('chat.thinkingDisplay')} description={t('chat.thinkingDisplayDesc')}>
+          <div className="w-full max-w-[320px]">
+            <SegmentedControl
+              value={reasoningDisplayMode}
+              options={[
+                { value: 'capsule', label: t('chat.capsule') },
+                { value: 'italic', label: t('chat.italic') },
+                { value: 'markdown', label: t('chat.markdown') },
+              ]}
+              onChange={v => {
+                setReasoningDisplayMode(v as ReasoningDisplayMode)
+                themeStore.setReasoningDisplayMode(v as ReasoningDisplayMode)
               }}
             />
+          </div>
+        </SettingField>
+      </SettingsSection>
+
+      <SettingsSection title={t('chat.stepFinishInfo')}>
+        {STEP_FINISH_FIELDS.map(({ key, label, desc }) => (
+          <SettingRow key={key} label={t(label)} description={t(desc)} onClick={() => toggleStepField(key)}>
+            <Toggle enabled={stepFinishDisplay[key]} onChange={() => toggleStepField(key)} />
           </SettingRow>
         ))}
 
         {stepFinishDisplay.completedAt && (
-          <div>
-            <p className="text-[length:var(--fs-md)] text-text-100 mb-1.5">{t('chat.completedAtFormat')}</p>
-            <p className="text-[length:var(--fs-sm)] text-text-400 mb-3">{t('chat.completedAtFormatDesc')}</p>
-            <SegmentedControl
-              value={completedAtFormat}
-              options={[
-                { value: 'time', label: t('chat.completedAtTimeOnly') },
-                { value: 'dateTime', label: t('chat.completedAtDateTime') },
-              ]}
-              onChange={v => {
-                const next = v as CompletedAtFormat
-                setCompletedAtFormat(next)
-                themeStore.setCompletedAtFormat(next)
-              }}
-            />
-          </div>
+          <SettingField label={t('chat.completedAtFormat')} description={t('chat.completedAtFormatDesc')}>
+            <div className="w-full max-w-[280px]">
+              <SegmentedControl
+                value={completedAtFormat}
+                options={[
+                  { value: 'time', label: t('chat.completedAtTimeOnly') },
+                  { value: 'dateTime', label: t('chat.completedAtDateTime') },
+                ]}
+                onChange={v => {
+                  const next = v as CompletedAtFormat
+                  setCompletedAtFormat(next)
+                  themeStore.setCompletedAtFormat(next)
+                }}
+              />
+            </div>
+          </SettingField>
         )}
       </SettingsSection>
     </div>

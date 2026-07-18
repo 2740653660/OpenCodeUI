@@ -5,7 +5,7 @@ import { Dialog } from '../../../components/ui/Dialog'
 import { getConfig, getGlobalConfig, getProviderConfigs, listAvailableShells, updateGlobalConfig } from '../../../api'
 import type { Config } from '../../../types/api/config'
 import { useCurrentDirectory, useIsMobile } from '../../../hooks'
-import { SettingsCard, SettingsSection } from './SettingsUI'
+import { SettingsSection } from './SettingsUI'
 import { validateConfig, validationDrillTargetForError, type ValidationDrillTarget, type ValidationError } from './configEditorValidation'
 import { ValidationDrillTargetContext } from './configEditorDrillState'
 import { JsonDraftErrorContext } from './configEditorJsonDraft'
@@ -330,26 +330,24 @@ export function ConfigSettings() {
   const [open, setOpen] = useState(false)
   return (
     <div>
-      <SettingsSection title={t('config.title')}>
-        <SettingsCard
-          title={t('config.sourceTitle')}
-          description={t('config.sourceDesc')}
-          actions={
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-accent-main-100 px-3 py-2 text-[length:var(--fs-sm)] font-medium text-white transition-colors hover:bg-accent-main-100/90"
-            >
-              <SettingsIcon size={14} />
-              {t('config.openEditor')}
-            </button>
-          }
-        >
-          <div className="flex items-start gap-2 rounded-lg border border-warning-200/30 bg-warning-100/10 px-3 py-2 text-[length:var(--fs-xs)] text-text-300">
-            <AlertCircleIcon size={14} className="mt-0.5 shrink-0 text-warning-100" />
-            <span>{t('config.sdkOnlyWarning')}</span>
-          </div>
-        </SettingsCard>
+      <SettingsSection
+        title={t('config.sourceTitle')}
+        description={t('config.sourceDesc')}
+        actions={
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-[length:var(--fs-sm)] font-medium text-accent-main-100 hover:bg-accent-main-100/10 transition-colors"
+          >
+            <SettingsIcon size={14} />
+            {t('config.openEditor')}
+          </button>
+        }
+      >
+        <div className="flex items-start gap-2.5 rounded-lg bg-warning-bg/40 border border-warning-100/20 px-3.5 py-3 text-[length:var(--fs-sm)] text-text-300 leading-relaxed">
+          <AlertCircleIcon size={14} className="mt-0.5 shrink-0 text-warning-100" />
+          <span>{t('config.sdkOnlyWarning')}</span>
+        </div>
       </SettingsSection>
       <ConfigEditorDialog isOpen={open} onClose={() => setOpen(false)} />
     </div>

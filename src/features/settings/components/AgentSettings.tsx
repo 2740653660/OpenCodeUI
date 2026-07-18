@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { autoApproveStore } from '../../../store'
 import type { AlwaysAllowMode } from '../../../store/autoApproveStore'
 import { themeStore, type ToolCardStyle } from '../../../store/themeStore'
-import { Toggle, SegmentedControl, SettingRow, SettingsSection } from './SettingsUI'
+import { Toggle, SegmentedControl, SettingRow, SettingField, SettingsSection } from './SettingsUI'
 
 export function AgentSettings() {
   const { t } = useTranslation(['settings'])
@@ -23,41 +23,6 @@ export function AgentSettings() {
     if (mode === 'backend') autoApproveStore.clearAllRules()
   }
 
-  const handleApprovePendingOnFullAutoToggle = () => {
-    const next = !approvePendingOnFullAuto
-    setApprovePendingOnFullAuto(next)
-    autoApproveStore.setApprovePendingOnFullAuto(next)
-  }
-
-  const handleQueueFollowupMessagesToggle = () => {
-    const next = !queueFollowupMessages
-    setQueueFollowupMessages(next)
-    themeStore.setQueueFollowupMessages(next)
-  }
-
-  const handleDescriptiveToolStepsToggle = () => {
-    const next = !descriptiveToolSteps
-    setDescriptiveToolSteps(next)
-    themeStore.setDescriptiveToolSteps(next)
-  }
-
-  const handleInlineToolRequestsToggle = () => {
-    const next = !inlineToolRequests
-    setInlineToolRequests(next)
-    themeStore.setInlineToolRequests(next)
-  }
-
-  const handleCompactInlinePermissionToggle = () => {
-    const next = !compactInlinePermission
-    setCompactInlinePermission(next)
-    themeStore.setCompactInlinePermission(next)
-  }
-
-  const handleToolCardStyleChange = (style: ToolCardStyle) => {
-    setToolCardStyle(style)
-    themeStore.setToolCardStyle(style)
-  }
-
   const handleImmersiveModeToggle = () => {
     const next = !immersiveMode
     setImmersiveMode(next)
@@ -68,50 +33,76 @@ export function AgentSettings() {
     setCompactInlinePermission(next)
   }
 
-  const handleProcessCollapseToggle = () => {
+  const toggleApprovePending = () => {
+    const next = !approvePendingOnFullAuto
+    setApprovePendingOnFullAuto(next)
+    autoApproveStore.setApprovePendingOnFullAuto(next)
+  }
+
+  const toggleQueueFollowup = () => {
+    const next = !queueFollowupMessages
+    setQueueFollowupMessages(next)
+    themeStore.setQueueFollowupMessages(next)
+  }
+
+  const toggleInlineToolRequests = () => {
+    const next = !inlineToolRequests
+    setInlineToolRequests(next)
+    themeStore.setInlineToolRequests(next)
+  }
+
+  const toggleDescriptiveToolSteps = () => {
+    const next = !descriptiveToolSteps
+    setDescriptiveToolSteps(next)
+    themeStore.setDescriptiveToolSteps(next)
+  }
+
+  const toggleProcessCollapse = () => {
     const next = !processCollapseEnabled
     setProcessCollapseEnabled(next)
     themeStore.setProcessCollapseEnabled(next)
   }
 
+  const toggleCompactInlinePermission = () => {
+    const next = !compactInlinePermission
+    setCompactInlinePermission(next)
+    themeStore.setCompactInlinePermission(next)
+  }
+
   return (
     <div>
-      <SettingsSection title={t('agent.behavior')}>
-        <p className="text-[length:var(--fs-sm)] text-text-400">{t('agent.behaviorDesc')}</p>
-
-        <div>
-          <p className="text-[length:var(--fs-md)] text-text-100 mb-1.5">{t('chat.alwaysAllowMode')}</p>
-          <p className="text-[length:var(--fs-sm)] text-text-400 mb-3">{t('chat.alwaysAllowModeDesc')}</p>
-          <SegmentedControl
-            value={alwaysAllowMode}
-            options={[
-              { value: 'backend', label: t('chat.alwaysAllowBackend') },
-              { value: 'frontend', label: t('chat.alwaysAllowFrontend') },
-            ]}
-            onChange={v => handleAlwaysAllowModeChange(v as AlwaysAllowMode)}
-          />
-        </div>
+      <SettingsSection title={t('agent.behavior')} description={t('agent.behaviorDesc')}>
+        <SettingField label={t('chat.alwaysAllowMode')} description={t('chat.alwaysAllowModeDesc')}>
+          <div className="w-full max-w-[280px]">
+            <SegmentedControl
+              value={alwaysAllowMode}
+              options={[
+                { value: 'backend', label: t('chat.alwaysAllowBackend') },
+                { value: 'frontend', label: t('chat.alwaysAllowFrontend') },
+              ]}
+              onChange={v => handleAlwaysAllowModeChange(v as AlwaysAllowMode)}
+            />
+          </div>
+        </SettingField>
 
         <SettingRow
           label={t('chat.approvePendingOnFullAuto')}
           description={t('chat.approvePendingOnFullAutoDesc')}
-          onClick={handleApprovePendingOnFullAutoToggle}
+          onClick={toggleApprovePending}
         >
-          <Toggle enabled={approvePendingOnFullAuto} onChange={handleApprovePendingOnFullAutoToggle} />
+          <Toggle enabled={approvePendingOnFullAuto} onChange={toggleApprovePending} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.queueFollowupMessages')}
           description={t('chat.queueFollowupMessagesDesc')}
-          onClick={handleQueueFollowupMessagesToggle}
+          onClick={toggleQueueFollowup}
         >
-          <Toggle enabled={queueFollowupMessages} onChange={handleQueueFollowupMessagesToggle} />
+          <Toggle enabled={queueFollowupMessages} onChange={toggleQueueFollowup} />
         </SettingRow>
       </SettingsSection>
 
-      <SettingsSection title={t('agent.toolInteraction')}>
-        <p className="text-[length:var(--fs-sm)] text-text-400">{t('agent.toolInteractionDesc')}</p>
-
+      <SettingsSection title={t('agent.toolInteraction')} description={t('agent.toolInteractionDesc')}>
         <SettingRow
           label={t('chat.immersiveMode')}
           description={t('chat.immersiveModeDesc')}
@@ -123,47 +114,50 @@ export function AgentSettings() {
         <SettingRow
           label={t('chat.inlineToolRequests')}
           description={t('chat.inlineToolRequestsDesc')}
-          onClick={handleInlineToolRequestsToggle}
+          onClick={toggleInlineToolRequests}
         >
-          <Toggle enabled={inlineToolRequests} onChange={handleInlineToolRequestsToggle} />
+          <Toggle enabled={inlineToolRequests} onChange={toggleInlineToolRequests} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.descriptiveToolSteps')}
           description={t('chat.descriptiveToolStepsDesc')}
-          onClick={handleDescriptiveToolStepsToggle}
+          onClick={toggleDescriptiveToolSteps}
         >
-          <Toggle enabled={descriptiveToolSteps} onChange={handleDescriptiveToolStepsToggle} />
+          <Toggle enabled={descriptiveToolSteps} onChange={toggleDescriptiveToolSteps} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.processCollapse')}
           description={t('chat.processCollapseDesc')}
-          onClick={handleProcessCollapseToggle}
+          onClick={toggleProcessCollapse}
         >
-          <Toggle enabled={processCollapseEnabled} onChange={handleProcessCollapseToggle} />
+          <Toggle enabled={processCollapseEnabled} onChange={toggleProcessCollapse} />
         </SettingRow>
 
         <SettingRow
           label={t('chat.compactInlinePermission')}
           description={t('chat.compactInlinePermissionDesc')}
-          onClick={handleCompactInlinePermissionToggle}
+          onClick={toggleCompactInlinePermission}
         >
-          <Toggle enabled={compactInlinePermission} onChange={handleCompactInlinePermissionToggle} />
+          <Toggle enabled={compactInlinePermission} onChange={toggleCompactInlinePermission} />
         </SettingRow>
 
-        <div>
-          <p className="text-[length:var(--fs-md)] text-text-100 mb-1.5">{t('chat.toolCardStyle')}</p>
-          <p className="text-[length:var(--fs-sm)] text-text-400 mb-3">{t('chat.toolCardStyleDesc')}</p>
-          <SegmentedControl
-            value={toolCardStyle}
-            options={[
-              { value: 'classic', label: t('chat.toolCardClassic') },
-              { value: 'compact', label: t('chat.toolCardCompact') },
-            ]}
-            onChange={v => handleToolCardStyleChange(v as ToolCardStyle)}
-          />
-        </div>
+        <SettingField label={t('chat.toolCardStyle')} description={t('chat.toolCardStyleDesc')}>
+          <div className="w-full max-w-[280px]">
+            <SegmentedControl
+              value={toolCardStyle}
+              options={[
+                { value: 'classic', label: t('chat.toolCardClassic') },
+                { value: 'compact', label: t('chat.toolCardCompact') },
+              ]}
+              onChange={v => {
+                setToolCardStyle(v as ToolCardStyle)
+                themeStore.setToolCardStyle(v as ToolCardStyle)
+              }}
+            />
+          </div>
+        </SettingField>
       </SettingsSection>
     </div>
   )

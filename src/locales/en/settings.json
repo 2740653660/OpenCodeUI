@@ -153,6 +153,7 @@
     "searchPlaceholder": "Search models",
     "clearSearch": "Clear search",
     "keepOneEnabled": "At least one model stays enabled so the chat can still send messages.",
+    "multiSelectHint": "Shift-click for a range, Ctrl/⌘-click to toggle without moving the anchor.",
     "loading": "Loading models...",
     "empty": "No models available on the current server",
     "noResults": "No models match the current search",

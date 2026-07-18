@@ -6,9 +6,6 @@ import {
   VolumeIcon,
   VolumeOffIcon,
   PlayIcon,
-  UploadIcon,
-  DownloadIcon,
-  TrashIcon,
   CheckIcon,
   ShieldIcon,
   QuestionIcon,
@@ -21,7 +18,7 @@ import {
   useNotificationEventSettings,
 } from '../../../store/notificationEventSettingsStore'
 import { soundStore, useSoundSettings } from '../../../store/soundStore'
-import { Toggle, SettingRow, SettingsCard } from './SettingsUI'
+import { Toggle, SettingRow, SettingField, SettingsSection, SettingsSubgroup } from './SettingsUI'
 import { BUILTIN_SOUNDS, SOUND_OPTIONS, isSoundSupported, playSound } from '../../../utils/soundPlayer'
 import type { NotificationType } from '../../../store/notificationStore'
 
@@ -211,75 +208,72 @@ function EventSoundCard({
   }, [type])
 
   return (
-    <div className="rounded-lg border border-border-200/50 bg-bg-000/40 p-3">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2.5">
-        <div className="flex items-center gap-2.5">
-          <span className={color}>{icon}</span>
-          <div>
-            <div className="text-[length:var(--fs-md)] font-medium text-text-100">
-              {t(labelKey as `notifications.${string}`)}
-            </div>
-            <div className="text-[length:var(--fs-xs)] text-text-400">{t(descKey as `notifications.${string}`)}</div>
+    <div className="relative rounded-lg border border-border-200/50 p-3 hover:border-border-300/60 transition-colors">
+      {/* 试听按钮 — 绝对定位右上角 */}
+      <button
+        type="button"
+        onClick={handlePreview}
+        disabled={eventConfig.soundId === 'none'}
+        className="absolute right-2 top-2 inline-flex items-center justify-center w-7 h-7 rounded-md text-text-400 hover:text-text-200 hover:bg-bg-200/60 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-400"
+        title={t('notifications.preview')}
+        aria-label={t('notifications.preview')}
+      >
+        <PlayIcon size={13} />
+      </button>
+
+      {/* Header — 图标+标题+描述 */}
+      <div className="flex items-start gap-2.5 min-w-0 mb-2.5 pr-9">
+        <span className={`${color} shrink-0 mt-[3px]`}>{icon}</span>
+        <div className="min-w-0">
+          <div className="text-[length:var(--fs-md)] font-medium text-text-100 leading-snug">
+            {t(labelKey as `notifications.${string}`)}
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handlePreview}
-            disabled={eventConfig.soundId === 'none'}
-            className="gap-1.5 text-[length:var(--fs-sm)]"
-          >
-            <PlayIcon size={12} />
-            {t('notifications.preview')}
-          </Button>
+          <div className="text-[length:var(--fs-xs)] text-text-400 mt-0.5">
+            {t(descKey as `notifications.${string}`)}
+          </div>
         </div>
       </div>
 
-      {/* Sound Selector */}
+      {/* Sound Selector — 无边框胶囊 */}
       <div className="flex flex-wrap gap-1.5 mb-2">
-        {/* None option */}
         <button
           type="button"
           onClick={() => handleSoundChange('none')}
-          className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors border
+          className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors
             ${
               eventConfig.soundId === 'none'
-                ? 'bg-accent-main-100/10 text-accent-main-100 border-accent-main-100/30'
-                : 'text-text-400 border-border-200/40 hover:bg-bg-100/60 hover:text-text-200'
+                ? 'bg-accent-main-100/10 text-accent-main-100'
+                : 'text-text-400 hover:bg-bg-200/60 hover:text-text-200'
             }`}
         >
           {t('notifications.noSound')}
         </button>
 
-        {/* Built-in options */}
         {soundOptions.map(sid => (
           <button
             key={sid}
             type="button"
             onClick={() => handleSoundChange(sid)}
-            className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors border
+            className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors
               ${
                 eventConfig.soundId === sid
-                  ? 'bg-accent-main-100/10 text-accent-main-100 border-accent-main-100/30'
-                  : 'text-text-400 border-border-200/40 hover:bg-bg-100/60 hover:text-text-200'
+                  ? 'bg-accent-main-100/10 text-accent-main-100'
+                  : 'text-text-400 hover:bg-bg-200/60 hover:text-text-200'
               }`}
           >
             {BUILTIN_SOUNDS[sid]}
           </button>
         ))}
 
-        {/* Custom option — 只要有已上传的自定义音频就显示，可来回切换 */}
         {hasCustom && (
           <button
             type="button"
             onClick={() => handleSoundChange('custom')}
-            className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors border
+            className={`px-2.5 py-1 rounded-md text-[length:var(--fs-sm)] font-medium transition-colors
               ${
                 eventConfig.soundId === 'custom'
-                  ? 'bg-accent-main-100/10 text-accent-main-100 border-accent-main-100/30'
-                  : 'text-text-400 border-border-200/40 hover:bg-bg-100/60 hover:text-text-200'
+                  ? 'bg-accent-main-100/10 text-accent-main-100'
+                  : 'text-text-400 hover:bg-bg-200/60 hover:text-text-200'
               }`}
           >
             {t('notifications.customSound')}
@@ -287,54 +281,48 @@ function EventSoundCard({
         )}
       </div>
 
-      {/* Custom audio info + actions */}
+      {/* Custom audio + actions — 行内 ghost 按钮 */}
       {hasCustom && eventConfig.customFileName && (
-        <div className="flex items-center gap-2 mb-1.5 px-0.5">
+        <div className="flex items-center gap-1 mb-1.5">
           <span
-            className="text-[length:var(--fs-xs)] text-text-300 truncate max-w-[200px]"
+            className="text-[length:var(--fs-xs)] text-text-400 truncate max-w-[160px]"
             title={eventConfig.customFileName}
           >
             {eventConfig.customFileName}
           </span>
-          <Button
-            size="sm"
-            variant="ghost"
+          <button
+            type="button"
             onClick={handleExportCustom}
-            className="gap-1 text-[length:var(--fs-xs)] h-6 px-1.5"
+            className="text-[length:var(--fs-xs)] text-accent-main-100 hover:text-accent-main-200 px-1.5 py-0.5 rounded-md hover:bg-accent-main-100/10 transition-colors"
           >
-            <DownloadIcon size={10} />
             {t('notifications.exportAudio')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
+          </button>
+          <button
+            type="button"
             onClick={handleRemoveCustom}
-            className="gap-1 text-[length:var(--fs-xs)] h-6 px-1.5 text-red-400 hover:text-red-300"
+            className="text-[length:var(--fs-xs)] text-text-400 hover:text-danger-100 px-1.5 py-0.5 rounded-md hover:bg-danger-100/10 transition-colors"
           >
-            <TrashIcon size={10} />
             {t('notifications.removeCustom')}
-          </Button>
+          </button>
         </div>
       )}
 
       {/* Upload row */}
       <div className="flex items-center gap-2 mt-1">
         <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
-        <Button
-          size="sm"
-          variant="ghost"
+        <button
+          type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="gap-1.5 text-[length:var(--fs-xs)] h-7"
+          className="text-[length:var(--fs-xs)] text-accent-main-100 hover:text-accent-main-200 px-2 py-1 rounded-md hover:bg-accent-main-100/10 transition-colors"
         >
-          <UploadIcon size={11} />
           {hasCustom ? t('notifications.replaceAudio') : t('notifications.uploadAudio')}
-        </Button>
+        </button>
         <span className="text-[length:var(--fs-xs)] text-text-500 ml-auto">{t('notifications.supportedFormats')}</span>
       </div>
 
       {/* Upload Error */}
       {uploadError && (
-        <div className="mt-1.5 text-[length:var(--fs-xs)] text-red-400 flex items-center gap-1.5">
+        <div className="mt-1.5 text-[length:var(--fs-xs)] text-danger-100 flex items-center gap-1.5">
           <AlertCircleIcon size={11} />
           {uploadError}
         </div>
@@ -371,142 +359,110 @@ export function NotificationSettings() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Row 1: System Notifications + In-App Alerts */}
-      <div className="grid gap-4 xl:grid-cols-2">
-        <SettingsCard
-          title={t('notifications.systemNotifications')}
-          description={t('notifications.systemNotificationsDesc')}
-        >
+    <div>
+      <SettingsSection title={t('notifications.systemNotifications')} description={t('notifications.systemNotificationsDesc')}>
+        {notificationsSupported ? (
           <div className="space-y-3">
-            {notificationsSupported ? (
-              <div className="space-y-1.5">
-                <SettingRow
-                  label={t('notifications.notificationsLabel')}
-                  description={
-                    notificationPermission === 'denied'
-                      ? t('notifications.blockedByBrowser')
-                      : t('notifications.notifyWhenComplete')
-                  }
-                  onClick={() => notificationPermission !== 'denied' && setNotificationsEnabled(!notificationsEnabled)}
-                >
-                  <Toggle
-                    enabled={notificationsEnabled && notificationPermission !== 'denied'}
-                    onChange={() =>
-                      notificationPermission !== 'denied' && setNotificationsEnabled(!notificationsEnabled)
-                    }
-                  />
-                </SettingRow>
+            <SettingRow
+              label={t('notifications.notificationsLabel')}
+              description={
+                notificationPermission === 'denied'
+                  ? t('notifications.blockedByBrowser')
+                  : t('notifications.notifyWhenComplete')
+              }
+              onClick={() => notificationPermission !== 'denied' && setNotificationsEnabled(!notificationsEnabled)}
+              disabled={notificationPermission === 'denied'}
+            >
+              <Toggle
+                enabled={notificationsEnabled && notificationPermission !== 'denied'}
+                disabled={notificationPermission === 'denied'}
+                onChange={() =>
+                  notificationPermission !== 'denied' && setNotificationsEnabled(!notificationsEnabled)
+                }
+              />
+            </SettingRow>
 
-                <SettingRow
-                  label={t('notifications.testNotification')}
-                  description={
-                    notificationsEnabled ? t('notifications.sendSampleDesc') : t('notifications.enableToTest')
-                  }
-                >
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleTestNotification}
-                    disabled={!notificationsEnabled || notificationPermission === 'denied'}
-                  >
-                    {t('common:send')}
-                  </Button>
-                </SettingRow>
-              </div>
-            ) : (
-              <div className="text-[length:var(--fs-sm)] text-text-400 leading-relaxed">
-                {t('notifications.notAvailable')}
-              </div>
-            )}
+            <SettingRow
+              label={t('notifications.testNotification')}
+              description={
+                notificationsEnabled ? t('notifications.sendSampleDesc') : t('notifications.enableToTest')
+              }
+            >
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleTestNotification}
+                disabled={!notificationsEnabled || notificationPermission === 'denied'}
+              >
+                {t('common:send')}
+              </Button>
+            </SettingRow>
 
             {notificationsEnabled && notificationPermission !== 'denied' && (
-              <div className="border-t border-border-200/35 pt-3">
-                <div className="px-1 mb-3">
-                  <div className="text-[length:var(--fs-md)] font-semibold text-text-100 mb-1.5">
-                    {t('notifications.notificationTypes')}
-                  </div>
-                  <div className="text-[length:var(--fs-xs)] text-text-400">
-                    {t('notifications.notificationTypesDesc')}
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  {EVENT_TYPES.map(evt => (
-                    <EventEnableRow
-                      key={evt.type}
-                      type={evt.type}
-                      labelKey={evt.labelKey}
-                      descKey={evt.descKey}
-                      icon={evt.icon}
-                      color={evt.color}
-                    />
-                  ))}
-                </div>
-              </div>
+              <SettingsSubgroup title={t('notifications.notificationTypes')} description={t('notifications.notificationTypesDesc')}>
+                {EVENT_TYPES.map(evt => (
+                  <EventEnableRow
+                    key={evt.type}
+                    type={evt.type}
+                    labelKey={evt.labelKey}
+                    descKey={evt.descKey}
+                    icon={evt.icon}
+                    color={evt.color}
+                  />
+                ))}
+              </SettingsSubgroup>
             )}
           </div>
-        </SettingsCard>
+        ) : (
+          <div className="text-[length:var(--fs-sm)] text-text-400 leading-relaxed">
+            {t('notifications.notAvailable')}
+          </div>
+        )}
+      </SettingsSection>
 
-        <SettingsCard title={t('notifications.inAppAlerts')} description={t('notifications.inAppAlertsDesc')}>
-          <SettingRow
-            label={t('notifications.toastNotifications')}
-            description={t('notifications.toastDesc')}
-            icon={<BellIcon size={14} />}
-            onClick={handleToastToggle}
-          >
-            <Toggle enabled={toastEnabled} onChange={handleToastToggle} />
-          </SettingRow>
-        </SettingsCard>
-      </div>
+      <SettingsSection title={t('notifications.inAppAlerts')} description={t('notifications.inAppAlertsDesc')}>
+        <SettingRow
+          label={t('notifications.toastNotifications')}
+          description={t('notifications.toastDesc')}
+          icon={<BellIcon size={14} />}
+          onClick={handleToastToggle}
+        >
+          <Toggle enabled={toastEnabled} onChange={handleToastToggle} />
+        </SettingRow>
+      </SettingsSection>
 
-      {/* Row 2: Sound Settings */}
-      <SettingsCard title={t('notifications.soundSettings')} description={t('notifications.soundSettingsDesc')}>
+      <SettingsSection title={t('notifications.soundSettings')} description={t('notifications.soundSettingsDesc')}>
         {soundSupported ? (
           <div className="space-y-4">
-            {/* Global Controls */}
-            <div className="space-y-1.5">
-              <SettingRow
-                label={t('notifications.soundEnabled')}
-                description={t('notifications.soundEnabledDesc')}
-                icon={soundSettings.enabled ? <VolumeIcon size={14} /> : <VolumeOffIcon size={14} />}
-                onClick={() => soundStore.setEnabled(!soundSettings.enabled)}
-              >
-                <Toggle
-                  enabled={soundSettings.enabled}
-                  onChange={() => soundStore.setEnabled(!soundSettings.enabled)}
-                />
-              </SettingRow>
+            <SettingRow
+              label={t('notifications.soundEnabled')}
+              description={t('notifications.soundEnabledDesc')}
+              icon={soundSettings.enabled ? <VolumeIcon size={14} /> : <VolumeOffIcon size={14} />}
+              onClick={() => soundStore.setEnabled(!soundSettings.enabled)}
+            >
+              <Toggle
+                enabled={soundSettings.enabled}
+                onChange={() => soundStore.setEnabled(!soundSettings.enabled)}
+              />
+            </SettingRow>
 
-              <SettingRow
-                label={t('notifications.currentSessionSound')}
-                description={t('notifications.currentSessionSoundDesc')}
-                onClick={() => soundStore.setCurrentSessionEnabled(!soundSettings.currentSessionEnabled)}
-              >
-                <Toggle
-                  enabled={soundSettings.currentSessionEnabled}
-                  onChange={() => soundStore.setCurrentSessionEnabled(!soundSettings.currentSessionEnabled)}
-                />
-              </SettingRow>
+            <SettingRow
+              label={t('notifications.currentSessionSound')}
+              description={t('notifications.currentSessionSoundDesc')}
+              onClick={() => soundStore.setCurrentSessionEnabled(!soundSettings.currentSessionEnabled)}
+            >
+              <Toggle
+                enabled={soundSettings.currentSessionEnabled}
+                onChange={() => soundStore.setCurrentSessionEnabled(!soundSettings.currentSessionEnabled)}
+              />
+            </SettingRow>
 
-              {/* Volume Slider */}
-              <div className="px-2.5 py-2.5">
-                <div className="text-[length:var(--fs-md)] font-medium text-text-100 mb-1">
-                  {t('notifications.volume')}
-                </div>
-                <div className="text-[length:var(--fs-xs)] text-text-400 mb-2.5">{t('notifications.volumeDesc')}</div>
-                <VolumeSlider value={soundSettings.volume} onChange={v => soundStore.setVolume(v)} />
-              </div>
-            </div>
+            <SettingField label={t('notifications.volume')} description={t('notifications.volumeDesc')}>
+              <VolumeSlider value={soundSettings.volume} onChange={v => soundStore.setVolume(v)} />
+            </SettingField>
 
-            {/* Event Sound Cards */}
             {soundSettings.enabled && (
-              <div>
-                <div className="text-[length:var(--fs-md)] font-semibold text-text-100 mb-1.5 px-1">
-                  {t('notifications.eventSounds')}
-                </div>
-                <div className="text-[length:var(--fs-xs)] text-text-400 mb-3 px-1">
-                  {t('notifications.eventSoundsDesc')}
-                </div>
+              <SettingField label={t('notifications.eventSounds')} description={t('notifications.eventSoundsDesc')}>
                 <div className="grid gap-3 xl:grid-cols-2">
                   {EVENT_TYPES.map(evt => (
                     <EventSoundCard
@@ -519,7 +475,7 @@ export function NotificationSettings() {
                     />
                   ))}
                 </div>
-              </div>
+              </SettingField>
             )}
           </div>
         ) : (
@@ -527,7 +483,7 @@ export function NotificationSettings() {
             {t('notifications.soundNotSupported')}
           </div>
         )}
-      </SettingsCard>
+      </SettingsSection>
     </div>
   )
 }

@@ -6,7 +6,7 @@ import { hasUpdateAvailable, updateStore, useUpdateStore, RELEASES_PAGE_URL } fr
 import { saveData } from '../../../utils/downloadUtils'
 import { exportSettingsBackup, importSettingsBackup, previewBackupMeta } from '../../../utils/settingsBackup'
 import { isTauri } from '../../../utils/tauri'
-import { SettingsCard, SettingsSection } from './SettingsUI'
+import { SettingsSection } from './SettingsUI'
 
 async function openExternalUrl(url: string): Promise<void> {
   if (isTauri()) {
@@ -99,74 +99,66 @@ export function AboutSettings() {
   }
 
   return (
-    <div className="space-y-7">
-      <SettingsSection title={t('about.title')}>
-        <SettingsCard title={t('about.versionCardTitle')} description={t('about.versionCardDesc')}>
-          <div className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-lg border border-border-200/50 bg-bg-000/35 px-3 py-2.5">
-                <div className="text-[length:var(--fs-xs)] text-text-400 mb-1">{t('about.currentVersion')}</div>
-                <div className="text-[length:var(--fs-base)] font-semibold text-text-100 font-mono">
-                  v{updateState.currentVersion}
-                </div>
-              </div>
-              <div className="rounded-lg border border-border-200/50 bg-bg-000/35 px-3 py-2.5">
-                <div className="text-[length:var(--fs-xs)] text-text-400 mb-1">{t('about.latestVersion')}</div>
-                <div className="text-[length:var(--fs-base)] font-semibold text-text-100 font-mono">
-                  {latestVersion}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border-200/50 bg-bg-100/35 px-3 py-3 text-[length:var(--fs-sm)] text-text-300 leading-relaxed">
-              <div className="font-medium text-text-100">{statusText}</div>
-              {releaseDate && <div className="mt-1 text-text-400">{t('about.publishedAt', { date: releaseDate })}</div>}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" isLoading={updateState.checking} onClick={handleCheckUpdates}>
-                {!updateState.checking && <RetryIcon size={12} />}
-                {t('about.checkNow')}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={handleOpenRelease}>
-                <ExternalLinkIcon size={12} />
-                {hasUpdate ? t('about.viewUpdate') : t('about.openReleases')}
-              </Button>
+    <div>
+      <SettingsSection title={t('about.versionCardTitle')} description={t('about.versionCardDesc')}>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-lg bg-bg-100/50 px-3.5 py-3">
+            <div className="text-[length:var(--fs-xs)] text-text-400 mb-1">{t('about.currentVersion')}</div>
+            <div className="text-[length:var(--fs-base)] font-semibold text-text-100 font-mono">
+              v{updateState.currentVersion}
             </div>
           </div>
-        </SettingsCard>
-
-        <SettingsCard title={t('about.backupCardTitle')} description={t('about.backupCardDesc')}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/json,.json"
-            onChange={handleImportBackup}
-            className="hidden"
-          />
-          <div className="space-y-4">
-            <div className="rounded-lg border border-border-200/50 bg-bg-100/35 px-3 py-3 text-[length:var(--fs-sm)] text-text-300 leading-relaxed">
-              {t('about.backupWarning')}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" isLoading={backupBusy === 'export'} onClick={handleExportBackup}>
-                {backupBusy !== 'export' && <DownloadIcon size={12} />}
-                {t('about.exportBackup')}
-              </Button>
-              <Button size="sm" variant="ghost" isLoading={backupBusy === 'import'} onClick={handleImportClick}>
-                {backupBusy !== 'import' && <UploadIcon size={12} />}
-                {t('about.importBackup')}
-              </Button>
-            </div>
-
-            {backupError && (
-              <div className="rounded-lg border border-danger-100/20 bg-danger-100/10 px-3 py-2 text-[length:var(--fs-sm)] text-danger-100 leading-relaxed">
-                {backupError}
-              </div>
-            )}
+          <div className="rounded-lg bg-bg-100/50 px-3.5 py-3">
+            <div className="text-[length:var(--fs-xs)] text-text-400 mb-1">{t('about.latestVersion')}</div>
+            <div className="text-[length:var(--fs-base)] font-semibold text-text-100 font-mono">{latestVersion}</div>
           </div>
-        </SettingsCard>
+        </div>
+
+        <div className="rounded-lg bg-bg-100/40 px-3.5 py-3 text-[length:var(--fs-sm)] text-text-300 leading-relaxed">
+          <div className="font-medium text-text-100">{statusText}</div>
+          {releaseDate && <div className="mt-1 text-text-400">{t('about.publishedAt', { date: releaseDate })}</div>}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" isLoading={updateState.checking} onClick={handleCheckUpdates}>
+            {!updateState.checking && <RetryIcon size={12} />}
+            {t('about.checkNow')}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleOpenRelease}>
+            <ExternalLinkIcon size={12} />
+            {hasUpdate ? t('about.viewUpdate') : t('about.openReleases')}
+          </Button>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title={t('about.backupCardTitle')} description={t('about.backupCardDesc')}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportBackup}
+          className="hidden"
+        />
+        <div className="rounded-lg bg-warning-bg/40 border border-warning-100/20 px-3.5 py-3 text-[length:var(--fs-sm)] text-text-300 leading-relaxed">
+          {t('about.backupWarning')}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" isLoading={backupBusy === 'export'} onClick={handleExportBackup}>
+            {backupBusy !== 'export' && <DownloadIcon size={12} />}
+            {t('about.exportBackup')}
+          </Button>
+          <Button size="sm" variant="ghost" isLoading={backupBusy === 'import'} onClick={handleImportClick}>
+            {backupBusy !== 'import' && <UploadIcon size={12} />}
+            {t('about.importBackup')}
+          </Button>
+        </div>
+
+        {backupError && (
+          <div className="rounded-lg bg-danger-100/10 border border-danger-100/20 px-3.5 py-2.5 text-[length:var(--fs-sm)] text-danger-100 leading-relaxed">
+            {backupError}
+          </div>
+        )}
       </SettingsSection>
     </div>
   )

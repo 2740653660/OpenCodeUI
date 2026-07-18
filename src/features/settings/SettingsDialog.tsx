@@ -160,7 +160,7 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'servers' }: Sett
   const isTauriDesktop = isTauri() && !isMobile
   const scrollRef = useRef<HTMLDivElement>(null)
   const normalizeTab = useCallback((next: SettingsDialogProps['initialTab']): SettingsTab => {
-    if (!next || next === 'general') return 'chat'
+    if (!next || next === 'general') return 'servers'
     return next
   }, [])
   const [tab, setTab] = useState<SettingsTab>(normalizeTab(initialTab))
@@ -206,21 +206,11 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'servers' }: Sett
     if (visibleTabs.some(t => t.id === tab)) return
 
     const frameId = requestAnimationFrame(() => {
-      setTab(visibleTabs[0]?.id || 'appearance')
+      setTab(visibleTabs[0]?.id || 'servers')
     })
 
     return () => cancelAnimationFrame(frameId)
   }, [tab, visibleTabs])
-
-  useEffect(() => {
-    if (!isOpen) return
-
-    const frameId = requestAnimationFrame(() => {
-      document.getElementById(`settings-tab-${tab}`)?.focus()
-    })
-
-    return () => cancelAnimationFrame(frameId)
-  }, [isOpen, tab])
 
   // 切换 tab 时重置滚动位置
   const switchTab = useCallback((nextTab: SettingsTab) => {
@@ -247,7 +237,6 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'servers' }: Sett
     [tab, visibleTabs, switchTab],
   )
 
-  const activeTabMeta = visibleTabs.find(vt => vt.id === tab) || visibleTabs[0]
   const activePanelId = `settings-panel-${tab}`
 
   // 移动端：全屏体验，顶部 sticky tab
@@ -264,54 +253,45 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'servers' }: Sett
         rawContent
       >
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* Sticky Header + Tabs */}
-          <div className="shrink-0">
-            {/* Title bar */}
-            <div className="flex items-center justify-center px-4 pt-3 pb-2">
-              <div className="text-[length:var(--fs-heading-3)] font-semibold text-text-100">{t('title')}</div>
-            </div>
-
-            {/* Tab Bar - horizontal scroll with padding for visual safety */}
-            <div className="relative">
-              <div
-                role="tablist"
-                aria-label={t('title')}
-                onKeyDown={handleTabKeyDown}
-                className="flex items-center gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-none"
-              >
-                {visibleTabs.map(vt => (
-                  <button
-                    key={vt.id}
-                    id={`settings-tab-${vt.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={vt.id === tab}
-                    aria-controls={`settings-panel-${vt.id}`}
-                    tabIndex={vt.id === tab ? 0 : -1}
-                    onClick={() => switchTab(vt.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[length:var(--fs-md)] font-medium transition-colors whitespace-nowrap shrink-0 border
-                      ${
-                        vt.id === tab
-                          ? 'bg-accent-main-100/10 text-accent-main-100 border-accent-main-100/30'
-                          : 'text-text-400 border-transparent active:bg-bg-100/60'
-                      }`}
-                  >
-                    {vt.icon}
-                    {vt.label}
-                  </button>
-                ))}
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 border-b border-border-100/40" />
+          {/* Sticky Tabs — 无标题、无线条，与桌面端设计语言一致 */}
+          <div className="shrink-0 pt-2">
+            <div
+              role="tablist"
+              aria-label={t('title')}
+              onKeyDown={handleTabKeyDown}
+              className="flex items-center gap-1 px-3 pb-2 overflow-x-auto scrollbar-none"
+            >
+              {visibleTabs.map(vt => (
+                <button
+                  key={vt.id}
+                  id={`settings-tab-${vt.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={vt.id === tab}
+                  aria-controls={`settings-panel-${vt.id}`}
+                  tabIndex={vt.id === tab ? 0 : -1}
+                  onClick={() => switchTab(vt.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[length:var(--fs-md)] font-medium transition-colors whitespace-nowrap shrink-0
+                    ${
+                      vt.id === tab
+                        ? 'bg-bg-100/80 text-text-100'
+                        : 'text-text-400 active:bg-bg-100/40'
+                    }`}
+                >
+                  {vt.icon}
+                  {vt.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Content - single scroll container */}
+          {/* Content */}
           <div
             id={activePanelId}
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
             ref={scrollRef}
-            className="flex-1 min-h-0 py-4 px-4 overflow-y-auto custom-scrollbar overscroll-contain"
+            className="flex-1 min-h-0 py-3 px-4 overflow-y-auto custom-scrollbar overscroll-contain"
           >
             <TabContent tab={tab} />
           </div>
@@ -331,88 +311,82 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'servers' }: Sett
       showCloseButton={false}
       rawContent
     >
-      <div className="flex h-[min(90vh,820px)]">
-        {/* Left Nav - 窄屏时收缩 */}
+      <div className="relative flex h-[min(90vh,820px)]">
+        {/* 关闭按钮 — 绝对定位右上角，悬浮于内容之上，不占布局 */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 hidden md:flex items-center justify-center w-7 h-7 rounded-md text-text-400/60 hover:text-text-200 hover:bg-bg-200/70 transition-colors"
+          aria-label={t('closeSettings')}
+          title={t('closeSettings')}
+        >
+          <CloseIcon size={16} />
+        </button>
+
+        {/* Left Nav — 与内容共享同一表面，仅靠留白和 active 胶囊区分 */}
         <nav
           role="tablist"
           aria-orientation="vertical"
           aria-label={t('title')}
-          className="w-[200px] xl:w-[236px] shrink-0 border-r border-border-100/60 py-4 px-2 xl:px-2.5 flex flex-col overflow-y-auto scrollbar-none"
+          className="w-[204px] xl:w-[228px] shrink-0 pt-10 pr-3 pl-6 xl:pl-7 pb-3 flex flex-col min-h-0"
           onKeyDown={handleTabKeyDown}
         >
-          <div className="px-2.5 xl:px-3 mb-4">
-            <div className="text-[length:var(--fs-base)] font-semibold text-text-100">{t('title')}</div>
-            <div className="text-[length:var(--fs-xs)] text-text-400 mt-0.5 leading-relaxed hidden xl:block">
-              {t('subtitle')}
-            </div>
-          </div>
-          <div className="space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none space-y-3.5 pb-2">
             {groupedTabs.map(group => (
               <div key={group.label}>
-                <div className="px-2.5 xl:px-3 mb-1.5 text-[length:var(--fs-xxs)] font-semibold uppercase tracking-wider text-text-400/90">
+                <div className="mb-1.5 px-2.5 text-[length:var(--fs-xxs)] font-semibold uppercase tracking-wider text-text-400/75">
                   {group.label}
                 </div>
                 <div className="space-y-0.5">
-                  {group.tabs.map(vt => (
-                    <button
-                      key={vt.id}
-                      id={`settings-tab-${vt.id}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={vt.id === tab}
-                      aria-controls={`settings-panel-${vt.id}`}
-                      onClick={() => switchTab(vt.id)}
-                      tabIndex={vt.id === tab ? 0 : -1}
-                      className={`w-full flex items-center gap-2.5 px-2.5 xl:px-3 py-2 xl:py-2.5 rounded-lg text-[length:var(--fs-md)] font-medium transition-colors
-                        ${
-                          vt.id === tab
-                            ? 'bg-bg-100 text-text-100 ring-1 ring-border-200/60'
-                            : 'text-text-400 hover:text-text-200 hover:bg-bg-100/50'
-                        }`}
-                    >
-                      {vt.icon}
-                      <span className="truncate">{vt.label}</span>
-                    </button>
-                  ))}
+                  {group.tabs.map(vt => {
+                    const active = vt.id === tab
+                    return (
+                      <button
+                        key={vt.id}
+                        id={`settings-tab-${vt.id}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        aria-controls={`settings-panel-${vt.id}`}
+                        onClick={() => switchTab(vt.id)}
+                        tabIndex={active ? 0 : -1}
+                        className={`w-full min-h-8 flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[length:var(--fs-md)] font-medium transition-colors
+                          ${
+                            active
+                              ? 'bg-bg-200/70 text-text-100'
+                              : 'text-text-400 hover:text-text-200 hover:bg-bg-100/50'
+                          }`}
+                      >
+                        <span className={active ? 'text-accent-main-100' : 'text-text-400'}>{vt.icon}</span>
+                        <span className="truncate">{vt.label}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="mt-auto pt-3 px-2.5 xl:px-3 text-[length:var(--fs-xxs)] text-text-400">
-            {t('version', { version: __APP_VERSION__ })}
+          {/* 版本号与菜单图标左边缘对齐，弱化为辅助信息 */}
+          <div className="shrink-0 mt-2 px-2.5">
+            <div
+              className="text-[length:var(--fs-xxs)] font-mono tabular-nums text-text-500/75 leading-snug truncate"
+              title={t('version', { version: __APP_VERSION__ })}
+            >
+              v{__APP_VERSION__}
+            </div>
           </div>
         </nav>
 
-        {/* Right Content */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          {/* Content Header - sticky at top */}
-          <div className="shrink-0 border-b border-border-100/60 px-5 xl:px-6 py-3.5 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="text-[length:var(--fs-heading-3)] font-semibold text-text-100">{activeTabMeta.label}</div>
-              <div className="text-[length:var(--fs-xs)] text-text-400 mt-0.5 leading-relaxed truncate">
-                {activeTabMeta.description}
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-text-400 hover:text-text-200 hover:bg-bg-100 rounded-md transition-colors -mr-1 shrink-0"
-              aria-label={t('closeSettings')}
-            >
-              <CloseIcon size={18} />
-            </button>
-          </div>
-
-          {/* Scroll area - single scroll container for all tab content */}
-          <div
-            id={activePanelId}
-            role="tabpanel"
-            aria-labelledby={`settings-tab-${tab}`}
-            ref={scrollRef}
-            className="flex-1 min-h-0 py-5 px-5 xl:px-6 overflow-y-auto custom-scrollbar"
-          >
-            <TabContent tab={tab} />
-          </div>
+        {/* Right Content — 与 nav 同一表面，仅靠左侧留白分隔 */}
+        <div
+          id={activePanelId}
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${tab}`}
+          ref={scrollRef}
+          className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar pt-10 pb-6 pl-8 xl:pl-9 pr-9 xl:pr-11"
+        >
+          <TabContent tab={tab} />
         </div>
       </div>
     </Dialog>

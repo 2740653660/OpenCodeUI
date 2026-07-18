@@ -9,6 +9,7 @@ import { useKeybindingStore } from '../../hooks/useKeybindings'
 import { keyEventToString, formatKeybinding, parseKeybinding } from '../../store/keybindingStore'
 import { UndoIcon, SearchIcon } from '../../components/Icons'
 import type { KeybindingConfig, KeybindingAction } from '../../store/keybindingStore'
+import { SettingsSection } from './components/SettingsUI'
 
 const ACTION_TRANSLATION_KEYS: Record<KeybindingAction, { label: string; description: string }> = {
   openSettings: { label: 'openSettings', description: 'openSettingsDesc' },
@@ -140,34 +141,20 @@ function KeybindingRow({ config, onEdit, onReset, isKeyUsed, t }: KeybindingRowP
   return (
     <div
       className={`
-      flex items-center h-9 px-3 rounded-md transition-colors group
+      group grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(180px,220px)] items-center gap-4 px-2.5 py-1 rounded-lg transition-colors
       ${isEditing ? 'bg-accent-main-100/5 ring-1 ring-accent-main-100/20' : 'hover:bg-bg-100/60'}
     `}
     >
-      {/* Label */}
-      <span className="flex-1 text-[length:var(--fs-md)] text-text-200 truncate">{config.label}</span>
+      <span className="min-w-0 truncate text-[length:var(--fs-md)] text-text-200">{config.label}</span>
 
-      {/* Reset */}
-      {isModified && !isEditing && (
-        <button
-          onClick={() => onReset(config.action)}
-          className="p-1 mr-1 rounded text-text-400 hover:text-text-100 hover:bg-bg-200 
-                     opacity-0 group-hover:opacity-100 transition-opacity"
-          title={t('keybindings.resetToDefault')}
-        >
-          <UndoIcon size={12} />
-        </button>
-      )}
-
-      {/* Key */}
       {isEditing ? (
-        <div className="flex items-center gap-2">
+        <div className="min-w-0">
           <div
             ref={captureRef}
             tabIndex={0}
             className={`
-              min-w-[120px] h-7 flex items-center justify-center px-3 
-              text-[length:var(--fs-sm)] font-mono rounded border-2 outline-none
+              w-full min-w-0 h-7 flex items-center justify-center px-3
+              text-[length:var(--fs-sm)] font-mono rounded-md border outline-none
               ${
                 error
                   ? 'border-danger-100/60 bg-danger-100/5 text-danger-100'
@@ -177,25 +164,39 @@ function KeybindingRow({ config, onEdit, onReset, isKeyUsed, t }: KeybindingRowP
           >
             {tempKey || <span className="text-text-400">...</span>}
           </div>
-          {error && <span className="text-[length:var(--fs-xs)] text-danger-100">{error}</span>}
+          {error && <div className="mt-1 truncate text-right text-[length:var(--fs-xs)] text-danger-100">{error}</div>}
         </div>
       ) : (
-        <button
-          onClick={() => {
-            setIsEditing(true)
-            setTempKey('')
-            setError('')
-          }}
-          className={`
-            h-7 flex items-center gap-0.5 px-1 rounded transition-colors
-            ${isModified ? 'hover:bg-accent-main-100/10' : 'hover:bg-bg-200/60'}
-          `}
-        >
-          <ShortcutDisplay
-            shortcut={config.currentKey}
-            className={isModified ? '[&_kbd]:border-accent-main-100/40 [&_kbd]:text-accent-main-100' : ''}
-          />
-        </button>
+        <div className="flex min-w-0 items-center justify-end gap-1">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center">
+            {isModified && (
+              <button
+                type="button"
+                onClick={() => onReset(config.action)}
+                className="rounded-md p-1.5 text-text-400 opacity-0 transition-opacity hover:bg-bg-200 hover:text-text-100 group-hover:opacity-100 focus-visible:opacity-100"
+                title={t('keybindings.resetToDefault')}
+                aria-label={t('keybindings.resetToDefault')}
+              >
+                <UndoIcon size={12} />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsEditing(true)
+              setTempKey('')
+              setError('')
+            }}
+            className={`h-7 min-w-[132px] flex items-center justify-end gap-0.5 px-1 rounded-md transition-colors
+              ${isModified ? 'hover:bg-accent-main-100/10' : 'hover:bg-bg-200/60'}`}
+          >
+            <ShortcutDisplay
+              shortcut={config.currentKey}
+              className={isModified ? '[&_kbd]:border-accent-main-100/40 [&_kbd]:text-accent-main-100' : ''}
+            />
+          </button>
+        </div>
       )}
     </div>
   )
@@ -269,64 +270,57 @@ export function KeybindingsSection() {
   }, [])
 
   return (
-    <div className="flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[length:var(--fs-sm)] font-medium text-text-400 uppercase tracking-wider">{t('keybindings.title')}</span>
-        {hasModifications && (
-          <button
-            onClick={resetAll}
-            className="text-[length:var(--fs-xs)] text-text-400 hover:text-danger-100 px-2 py-0.5 rounded hover:bg-danger-100/10 transition-colors"
-          >
-            {t('keybindings.resetAll')}
-          </button>
-        )}
-      </div>
-
-      {/* Search */}
-      <div className="relative mb-3">
-        <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-400 pointer-events-none" />
+    <SettingsSection title={t('keybindings.title')} description={t('keybindings.clickToRebind')}>
+      <div className="relative group">
+        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-text-400 w-3.5 h-3.5 group-focus-within:text-accent-main-100 transition-colors pointer-events-none" />
         <input
           ref={searchRef}
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={t('keybindings.filterPlaceholder')}
-          className="w-full h-8 pl-8 pr-3 text-[length:var(--fs-md)] bg-bg-050 border border-border-200 rounded-lg
-                     text-text-100 placeholder:text-text-400 
-                     focus:outline-none focus:border-accent-main-100/50 transition-colors"
+          spellCheck={false}
+          autoCorrect="off"
+          autoComplete="off"
+          autoCapitalize="off"
+          className="w-full h-9 bg-bg-200/70 hover:bg-bg-200 border border-border-200/50 rounded-lg pl-9 pr-20 text-[length:var(--fs-sm)] text-text-100 placeholder:text-text-400/70 focus:outline-none transition-colors"
         />
+        {hasModifications && (
+          <button
+            type="button"
+            onClick={resetAll}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 h-7 px-2 rounded-md text-[length:var(--fs-xs)] font-medium text-text-400 hover:text-danger-100 hover:bg-danger-100/10 transition-colors"
+          >
+            {t('keybindings.resetAll')}
+          </button>
+        )}
       </div>
 
-      {/* List - no inner scroll, parent handles scrolling */}
-      <div className="-mx-1">
+      <div className="space-y-3">
         {grouped.length === 0 ? (
           <div className="py-8 text-center text-[length:var(--fs-base)] text-text-400">{t('common:noMatches')}</div>
         ) : (
           grouped.map(({ category, items }) => (
-            <div key={category} className="mb-3">
-              <div className="px-3 py-1 text-[length:var(--fs-xs)] font-medium text-text-400 uppercase tracking-wider">
+            <div key={category}>
+              <div className="px-2.5 py-1 text-[length:var(--fs-xs)] font-medium text-text-400 uppercase tracking-wider">
                 {t(CATEGORY_LABELS[category])}
               </div>
-              {items.map(item => (
-                <KeybindingRow
-                  key={item.action}
-                  config={item}
-                  onEdit={setKeybinding}
-                  onReset={resetKeybinding}
-                  isKeyUsed={isKeyUsed}
-                  t={t}
-                />
-              ))}
+              <div className="space-y-0.5">
+                {items.map(item => (
+                  <KeybindingRow
+                    key={item.action}
+                    config={item}
+                    onEdit={setKeybinding}
+                    onReset={resetKeybinding}
+                    isKeyUsed={isKeyUsed}
+                    t={t}
+                  />
+                ))}
+              </div>
             </div>
           ))
         )}
       </div>
-
-      {/* Help */}
-      <div className="pt-3 mt-2 border-t border-border-100/50 text-[length:var(--fs-xs)] text-text-400">
-        {t('keybindings.clickToRebind')}
-      </div>
-    </div>
+    </SettingsSection>
   )
 }

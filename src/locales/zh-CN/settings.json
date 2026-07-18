@@ -153,6 +153,7 @@
     "searchPlaceholder": "搜索模型",
     "clearSearch": "清空搜索",
     "keepOneEnabled": "至少保留一个启用模型，这样对话还能继续发送消息。",
+    "multiSelectHint": "Shift 点击范围切换，Ctrl/⌘ 点击单独切换且不移动锚点。",
     "loading": "正在加载模型...",
     "empty": "当前服务器没有可用模型",
     "noResults": "没有匹配当前搜索的模型",

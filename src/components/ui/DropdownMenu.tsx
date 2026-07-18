@@ -17,6 +17,8 @@ interface DropdownMenuProps {
   mobileFullWidth?: boolean
   /** 约束菜单在此容器的边界内（宽度 ≤ 容器 65%，不溢出左右） */
   constrainToRef?: React.RefObject<HTMLElement | null>
+  /** z-index，默认 100；在 Dialog 等高 z-index 容器内使用时需要调高 */
+  zIndex?: number
   className?: string
   children: React.ReactNode
 }
@@ -35,6 +37,7 @@ export function DropdownMenu({
   maxWidth = 'min(320px, 90vw)',
   mobileFullWidth = false,
   constrainToRef,
+  zIndex = 100,
   className = '',
   children,
 }: DropdownMenuProps) {
@@ -168,8 +171,7 @@ export function DropdownMenu({
     <div
       aria-hidden={!isOpen}
       className={`
-        fixed z-[100]
-        p-1 glass border border-border-200/60 rounded-xl shadow-lg
+        fixed p-1 glass border border-border-200/60 rounded-xl shadow-lg
         transition-all duration-200 cubic-bezier(0.34, 1.15, 0.64, 1)
         ${isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}
         ${className}
@@ -177,6 +179,7 @@ export function DropdownMenu({
       style={{
         ...posStyle,
         ...sizeStyle,
+        zIndex,
         visibility: isOpen ? 'visible' : 'hidden',
         pointerEvents: isOpen ? 'auto' : 'none',
       }}
