@@ -93,20 +93,22 @@ function AnsweredQuestion({ qa }: { qa: QAPair }) {
             <span
               key={idx}
               title={option.description}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[length:var(--fs-sm)] rounded-md border ${
+              className={`inline-flex min-h-7 items-start gap-1.5 px-2.5 py-1 text-[length:var(--fs-sm)] leading-5 rounded-md border ${
                 isSelected ? 'border-text-100 text-text-100 bg-bg-300/40' : 'border-border-200/60 text-text-500'
               }`}
             >
               {qa.multiple && (
-                <span
-                  className={`inline-flex w-3.5 h-3.5 rounded items-center justify-center border ${
-                    isSelected ? 'border-text-100 bg-text-100 text-bg-000' : 'border-border-300'
-                  }`}
-                >
-                  {isSelected && <CheckIcon size={10} />}
+                <span className="inline-flex h-5 w-3.5 shrink-0 items-center justify-center">
+                  <span
+                    className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                      isSelected ? 'border-text-100 bg-text-100 text-bg-000' : 'border-border-300'
+                    }`}
+                  >
+                    {isSelected && <CheckIcon size={10} className="shrink-0" />}
+                  </span>
                 </span>
               )}
-              {option.label}
+              <span className="min-w-0 whitespace-normal break-words text-left">{option.label}</span>
             </span>
           )
         })}
@@ -117,14 +119,16 @@ function AnsweredQuestion({ qa }: { qa: QAPair }) {
           .map((customAnswer, idx) => (
             <span
               key={`custom-${idx}`}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[length:var(--fs-sm)] rounded-md border border-text-100 text-text-100 bg-bg-300/40"
+              className="inline-flex min-h-7 items-start gap-1.5 px-2.5 py-1 text-[length:var(--fs-sm)] leading-5 rounded-md border border-text-100 text-text-100 bg-bg-300/40"
             >
               {qa.multiple && (
-                <span className="inline-flex w-3.5 h-3.5 rounded items-center justify-center border border-text-100 bg-text-100 text-bg-000">
-                  <CheckIcon size={10} />
+                <span className="inline-flex h-5 w-3.5 shrink-0 items-center justify-center">
+                  <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-text-100 bg-text-100 text-bg-000">
+                    <CheckIcon size={10} className="shrink-0" />
+                  </span>
                 </span>
               )}
-              {customAnswer}
+              <span className="min-w-0 whitespace-normal break-words text-left">{customAnswer}</span>
             </span>
           ))}
       </div>
