@@ -37,6 +37,11 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
   }, [expanded, setExpanded, withScrollLock])
 
   const collapsedPreview = useMemo(() => (displayText || '').replace(/\s+/g, ' ').trim(), [displayText])
+  // markdown 折叠只取第一行，避免整段压扁后末尾硬切
+  const collapsedMarkdownPreview = useMemo(() => {
+    const firstLine = (displayText || '').split(/\r?\n/, 1)[0] ?? ''
+    return firstLine.trim() || collapsedPreview
+  }, [displayText, collapsedPreview])
   const thoughtDurationLabel = useMemo(() => {
     const start = part.time?.start
     const end = part.time?.end
@@ -122,39 +127,45 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
       : isPartStreaming
         ? 'text-[length:var(--fs-sm)] leading-5 text-text-200 whitespace-nowrap overflow-hidden text-ellipsis'
         : 'text-[length:var(--fs-sm)] leading-5 text-text-300 whitespace-nowrap overflow-hidden text-ellipsis'
-    // 折叠态 markdown：渲染完整内容，但强制只露一行
+    // 折叠态 markdown：只渲染第一行 + 单行省略号（对齐斜体）
     const collapsedMarkdownClassName = [
-      'max-h-5 overflow-hidden',
+      'h-5 max-h-5 overflow-hidden whitespace-nowrap text-ellipsis',
       isPartStreaming ? 'text-text-200' : 'text-text-300',
       isPartStreaming ? 'reasoning-shimmer-text' : '',
-      // 压扁块级结构，避免折叠时露出多行
-      '[&_.markdown-stream-block]:!my-0',
+      // 第一行 markdown 压成单行，才能吃到 text-ellipsis
+      '[&_.markdown-stream-block]:!my-0 [&_.markdown-stream-block]:inline',
       '[&_p]:!my-0 [&_p]:inline',
       '[&_h1]:!my-0 [&_h1]:inline [&_h2]:!my-0 [&_h2]:inline [&_h3]:!my-0 [&_h3]:inline',
       '[&_ul]:!my-0 [&_ol]:!my-0 [&_li]:inline [&_li]:!my-0',
-      '[&_pre]:!my-0 [&_pre]:inline-block [&_pre]:max-w-full [&_pre]:overflow-hidden',
+      '[&_pre]:!my-0 [&_pre]:inline',
+      '[&_code]:inline',
       '[&_blockquote]:!my-0 [&_blockquote]:inline',
       '[&_br]:hidden',
     ].join(' ')
 
+    // 与工具 steps / 过程折叠块对齐：header 用 py-1，根节点不再额外加 py
     const content = shouldUseToggle ? (
-      <>
+      <div className="flex flex-col">
         <button
           type="button"
           ref={headerRef}
           onClick={toggleExpanded}
           aria-expanded={expanded}
-          className="group/reasoning flex w-full min-w-0 items-start gap-2 m-0 border-0 bg-transparent p-0 text-left cursor-pointer text-text-400 hover:text-text-200"
+          className="group/reasoning flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 m-0 border-0 bg-transparent text-left cursor-pointer text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
         >
           <div ref={summaryContainerRef} className="relative min-w-0 flex-1 overflow-hidden">
-            <span className="relative inline-block min-w-0 max-w-full align-top">
+            <span className="relative block min-w-0 max-w-full">
               {expanded ? (
                 <span className={`block min-w-0 ${isMarkdownMode ? '' : 'italic '} ${summaryClassName}`}>
                   {expandedMetaText}
                 </span>
               ) : isMarkdownMode ? (
                 <div className={`min-w-0 text-[length:var(--fs-sm)] leading-5 ${collapsedMarkdownClassName}`}>
-                  <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
+                  <MarkdownRenderer
+                    content={collapsedMarkdownPreview}
+                    variant="reasoning"
+                    isStreaming={isPartStreaming}
+                  />
                 </div>
               ) : (
                 <span className={`block min-w-0 italic ${summaryClassName} ${isPartStreaming ? 'reasoning-shimmer-text' : ''}`}>
@@ -180,26 +191,26 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
         </button>
 
         <div
-          className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
-            expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-75'
+          className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+            expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
           }`}
         >
           <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: 'inset(0 -100% 0 -100%)' }}>
             {shouldRenderBody &&
               (isMarkdownMode ? (
-                <div className="text-[length:var(--fs-sm)]">
+                <div className="pt-1 text-[length:var(--fs-sm)]">
                   <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
                 </div>
               ) : (
-                <div className="text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300">
+                <div className="pt-1 text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300">
                   {displayText}
                 </div>
               ))}
           </div>
         </div>
-      </>
+      </div>
     ) : (
-      <div ref={summaryContainerRef} className="relative min-w-0 overflow-hidden text-[length:var(--fs-sm)]">
+      <div ref={summaryContainerRef} className="relative min-w-0 overflow-hidden py-1 text-[length:var(--fs-sm)]">
         {isMarkdownMode ? (
           <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
         ) : (
@@ -220,10 +231,10 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
     )
 
     return (
-      <div ref={rootRef} className="py-1">
+      <div ref={rootRef}>
         {ITALIC_SHOW_LEADING_GLYPH ? (
           <div className="grid grid-cols-[14px_minmax(0,1fr)] gap-x-1.5 items-start">
-            <span className="inline-flex h-5 w-[14px] items-start justify-center pt-[2px] text-text-500">
+            <span className="inline-flex h-5 w-[14px] items-start justify-center pt-[6px] text-text-500">
               {isPartStreaming ? <SpinnerIcon className="animate-spin" size={14} /> : <LightbulbIcon size={14} />}
             </span>
             <div className="min-w-0">{content}</div>
