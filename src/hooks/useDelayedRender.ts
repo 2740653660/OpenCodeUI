@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { EXPAND_MOTION } from '../constants/expandMotion'
 
 export interface DelayedRenderOptions {
   /**
@@ -18,7 +19,7 @@ export interface DelayedRenderOptions {
  */
 export function useDelayedRender(
   show: boolean,
-  delayMs: number = 320,
+  delayMs: number = EXPAND_MOTION.unmountDelayMs,
   options?: DelayedRenderOptions,
 ): boolean {
   const mountDelayMs = options?.mountDelayMs ?? 0

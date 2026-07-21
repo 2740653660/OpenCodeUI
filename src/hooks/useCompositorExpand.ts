@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { EXPAND_MOTION } from '../constants/expandMotion'
 
 function isAndroid(): boolean {
   return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
@@ -6,9 +7,8 @@ function isAndroid(): boolean {
 
 const DURATION_MS = 260
 const EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
-/** 桌面 grid 展开动画；消息流 MSG_EXPAND.panel 与此保持同一字符串 */
-export const COMPOSITOR_GRID_TRANSITION =
-  'transition-[grid-template-rows] duration-300 ease-in-out'
+/** @deprecated 用 EXPAND_MOTION.gridTransition；保留导出兼容旧 import */
+export const COMPOSITOR_GRID_TRANSITION = EXPAND_MOTION.gridTransition
 
 /**
  * Android expand blank fix:

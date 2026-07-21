@@ -1,11 +1,10 @@
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RetryIcon, PatchIcon, ChevronDownIcon, FileIcon } from '../../../components/Icons'
-import { useDelayedRender } from '../../../hooks/useDelayedRender'
 import { useDisclosureScrollLock } from '../../../hooks'
 import type { RetryPart, CompactionPart, PatchPart } from '../../../types/message'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
-import { chevronClass, expandFadeGridClass } from '../messageExpand'
+import { chevronClass, MessageExpandPanel, useMessageExpandRender } from '../messageExpand'
 
 // ============================================
 // Retry Part View - 显示重试状态
@@ -18,7 +17,7 @@ interface RetryPartViewProps {
 export const RetryPartView = memo(function RetryPartView({ part }: RetryPartViewProps) {
   const { t } = useTranslation('message')
   const [expanded, setExpanded] = useUiDisclosureState(`message:${part.messageID}:retry:${part.id}`, false)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const { attempt, error, time } = part
 
@@ -47,22 +46,20 @@ export const RetryPartView = memo(function RetryPartView({ part }: RetryPartView
         <ChevronDownIcon className={chevronClass(expanded)} />
       </button>
 
-      <div className={expandFadeGridClass(expanded)}>
-        <div className="overflow-hidden">
-          {shouldRenderBody && (
-            <div className="mt-2 pt-2 border-t border-warning-100/20">
-              <p className="text-[length:var(--fs-sm)] text-text-300 font-mono whitespace-pre-wrap break-words overflow-x-hidden">
-                {error.data.message}
+      <MessageExpandPanel open={expanded} variant="fade" innerClassName="overflow-hidden">
+        {shouldRenderBody && (
+          <div className="mt-2 pt-2 border-t border-warning-100/20">
+            <p className="text-[length:var(--fs-sm)] text-text-300 font-mono whitespace-pre-wrap break-words overflow-x-hidden">
+              {error.data.message}
+            </p>
+            {error.data.statusCode && (
+              <p className="text-[length:var(--fs-xxs)] text-text-500 mt-1">
+                {t('system.statusCode', { code: error.data.statusCode })}
               </p>
-              {error.data.statusCode && (
-                <p className="text-[length:var(--fs-xxs)] text-text-500 mt-1">
-                  {t('system.statusCode', { code: error.data.statusCode })}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+            )}
+          </div>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 })
@@ -99,7 +96,7 @@ interface PatchPartViewProps {
 export const PatchPartView = memo(function PatchPartView({ part }: PatchPartViewProps) {
   const { t } = useTranslation('message')
   const [expanded, setExpanded] = useUiDisclosureState(`message:${part.messageID}:patch:${part.id}`, false)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const { hash, files } = part
   const fileCount = files.length
@@ -121,20 +118,18 @@ export const PatchPartView = memo(function PatchPartView({ part }: PatchPartView
         <ChevronDownIcon className={chevronClass(expanded)} />
       </button>
 
-      <div className={expandFadeGridClass(expanded)}>
-        <div className="overflow-hidden">
-          {shouldRenderBody && (
-            <div className="px-3 py-2 border-t border-border-200/40 space-y-1">
-              {files.map((file, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-[length:var(--fs-sm)]">
-                  <FileIcon className="w-3 h-3 text-text-500" />
-                  <span className="text-text-300 font-mono truncate">{file}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <MessageExpandPanel open={expanded} variant="fade" innerClassName="overflow-hidden">
+        {shouldRenderBody && (
+          <div className="px-3 py-2 border-t border-border-200/40 space-y-1">
+            {files.map((file, idx) => (
+              <div key={idx} className="flex items-center gap-2 text-[length:var(--fs-sm)]">
+                <FileIcon className="w-3 h-3 text-text-500" />
+                <span className="text-text-300 font-mono truncate">{file}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 })

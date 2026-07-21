@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next'
 import type { SubtaskPart } from '../../../types/message'
 import { useChildSessions, type ChildSessionInfo } from '../../../store'
 import { useSessionNavigation } from '../../../contexts/SessionNavigationContext'
-import { useDelayedRender, useDisclosureScrollLock } from '../../../hooks'
+import { useDisclosureScrollLock } from '../../../hooks'
 import { UsersIcon, ChevronDownIcon, LayersIcon, TerminalIcon, ReturnIcon } from '../../../components/Icons'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
-import { chevronClass, expandGridClass } from '../messageExpand'
+import { chevronClass, MessageExpandPanel, useMessageExpandRender } from '../messageExpand'
 
 interface SubtaskPartViewProps {
   part: SubtaskPart
@@ -22,7 +22,7 @@ interface SubtaskPartViewProps {
 export const SubtaskPartView = memo(function SubtaskPartView({ part }: SubtaskPartViewProps) {
   const { t } = useTranslation('message')
   const [expanded, setExpanded] = useUiDisclosureState(`message:${part.messageID}:subtask:${part.id}`, false)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const { navigateToSession } = useSessionNavigation()
 
@@ -95,55 +95,53 @@ export const SubtaskPartView = memo(function SubtaskPartView({ part }: SubtaskPa
               {t('subtask.enter')}
             </button>
           )}
-          <ChevronDownIcon className={chevronClass(expanded, 'text-text-400')} />
+          <ChevronDownIcon className={chevronClass(expanded, 'md', 'text-text-400')} />
         </div>
       </div>
 
       {/* Expanded content */}
-      <div className={expandGridClass(expanded)}>
-        <div className="overflow-hidden">
-          {shouldRenderBody && (
-            <div className="px-4 py-3 border-t border-border-200/40 space-y-3">
-              {/* Prompt preview */}
-              <div>
-                <p className="text-[length:var(--fs-xxs)] text-text-500 uppercase tracking-wider mb-1">{t('subtask.task')}</p>
-                <p className="text-[length:var(--fs-sm)] text-text-300 whitespace-pre-wrap line-clamp-4">{part.prompt}</p>
-              </div>
-
-              {/* Model info */}
-              {part.model && (
-                <div className="flex items-center gap-2 text-[length:var(--fs-xxs)] text-text-500">
-                  <LayersIcon size={12} />
-                  <span>
-                    {part.model.providerID}/{part.model.modelID}
-                  </span>
-                </div>
-              )}
-
-              {/* Command (if slash command) */}
-              {part.command && (
-                <div className="flex items-center gap-2 text-[length:var(--fs-xxs)] text-text-500">
-                  <TerminalIcon size={12} />
-                  <span className="font-mono">{part.command}</span>
-                </div>
-              )}
-
-              {/* Child session info */}
-              {childSession && (
-                <div className="pt-2 border-t border-border-200/30">
-                  <button
-                    onClick={handleEnter}
-                    className="w-full flex items-center justify-center gap-2 py-2 text-[length:var(--fs-sm)] font-medium text-accent-main-100 hover:bg-accent-main-100/10 rounded-sm transition-colors"
-                  >
-                    <ReturnIcon size={14} />
-                    {t('subtask.viewFullSession')}
-                  </button>
-                </div>
-              )}
+      <MessageExpandPanel open={expanded} innerClassName="overflow-hidden">
+        {shouldRenderBody && (
+          <div className="px-4 py-3 border-t border-border-200/40 space-y-3">
+            {/* Prompt preview */}
+            <div>
+              <p className="text-[length:var(--fs-xxs)] text-text-500 uppercase tracking-wider mb-1">{t('subtask.task')}</p>
+              <p className="text-[length:var(--fs-sm)] text-text-300 whitespace-pre-wrap line-clamp-4">{part.prompt}</p>
             </div>
-          )}
-        </div>
-      </div>
+
+            {/* Model info */}
+            {part.model && (
+              <div className="flex items-center gap-2 text-[length:var(--fs-xxs)] text-text-500">
+                <LayersIcon size={12} />
+                <span>
+                  {part.model.providerID}/{part.model.modelID}
+                </span>
+              </div>
+            )}
+
+            {/* Command (if slash command) */}
+            {part.command && (
+              <div className="flex items-center gap-2 text-[length:var(--fs-xxs)] text-text-500">
+                <TerminalIcon size={12} />
+                <span className="font-mono">{part.command}</span>
+              </div>
+            )}
+
+            {/* Child session info */}
+            {childSession && (
+              <div className="pt-2 border-t border-border-200/30">
+                <button
+                  onClick={handleEnter}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-[length:var(--fs-sm)] font-medium text-accent-main-100 hover:bg-accent-main-100/10 rounded-sm transition-colors"
+                >
+                  <ReturnIcon size={14} />
+                  {t('subtask.viewFullSession')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 })

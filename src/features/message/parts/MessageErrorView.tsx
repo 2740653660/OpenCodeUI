@@ -2,11 +2,10 @@ import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageError } from '../../../types/message'
 import { AlertCircleIcon, ChevronDownIcon } from '../../../components/Icons'
-import { useDelayedRender } from '../../../hooks/useDelayedRender'
 import { useDisclosureScrollLock } from '../../../hooks'
 import { CodeBlock } from '../../../components/CodeBlock'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
-import { chevronClass, expandFadeGridClass } from '../messageExpand'
+import { chevronClass, MessageExpandPanel, useMessageExpandRender } from '../messageExpand'
 
 interface MessageErrorViewProps {
   error: MessageError
@@ -22,7 +21,7 @@ export const MessageErrorView = memo(function MessageErrorView({ error, stateKey
   const { title, description, details, severity } = getErrorInfo(error, t)
   const hasDetails = !!(details || description)
   const [expanded, setExpanded] = useUiDisclosureState(stateKey ?? `message-error:${title}`, false)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
 
   const colorClass = severity === 'error' ? 'text-danger-100' : 'text-warning-100'
@@ -61,16 +60,14 @@ export const MessageErrorView = memo(function MessageErrorView({ error, stateKey
         {hasDetails && <ChevronDownIcon className={chevronClass(expanded)} />}
       </div>
 
-      <div className={expandFadeGridClass(expanded)}>
-        <div className="overflow-hidden">
-          {shouldRenderBody && (
-            <div className={`mt-2 pt-2 space-y-1.5 border-t ${borderClass}`}>
-              <p className="text-[length:var(--fs-sm)] text-text-300 break-words">{description}</p>
-              {formattedDetails && <CodeBlock code={formattedDetails} language={detailsLang} maxHeight={240} />}
-            </div>
-          )}
-        </div>
-      </div>
+      <MessageExpandPanel open={expanded} variant="fade" innerClassName="overflow-hidden">
+        {shouldRenderBody && (
+          <div className={`mt-2 pt-2 space-y-1.5 border-t ${borderClass}`}>
+            <p className="text-[length:var(--fs-sm)] text-text-300 break-words">{description}</p>
+            {formattedDetails && <CodeBlock code={formattedDetails} language={detailsLang} maxHeight={240} />}
+          </div>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 })

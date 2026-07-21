@@ -2,7 +2,7 @@ import { memo, useState, useCallback, useRef, useEffect, type RefCallback } from
 import { useTranslation } from 'react-i18next'
 import { ContentBlock } from '../../../../components'
 import { ChevronRightIcon, ExternalLinkIcon, StopIcon } from '../../../../components/Icons'
-import { useDelayedRender, useDisclosureScrollLock, useResponsiveMaxHeight } from '../../../../hooks'
+import { useDisclosureScrollLock, useResponsiveMaxHeight } from '../../../../hooks'
 import { useSessionState, messageStore, childSessionStore } from '../../../../store'
 import { useSessionNavigation } from '../../../../contexts/SessionNavigationContext'
 import { abortSession, getSessionMessages } from '../../../../api'
@@ -10,7 +10,7 @@ import { sessionErrorHandler } from '../../../../utils'
 import { formatToolName } from '../../../../utils/formatUtils'
 import { useUiDisclosureState } from '../../../../utils/uiDisclosureState'
 import type { ToolRendererProps } from '../types'
-import { expandGridClass } from '../../messageExpand'
+import { MessageExpandPanel, useMessageExpandRender } from '../../messageExpand'
 import type { Message, TextPart, ToolPart } from '../../../../types/message'
 import { isVisibleTextPart } from '../../../../types/message'
 
@@ -37,7 +37,7 @@ export const TaskRenderer = memo(function TaskRenderer({ part, onFullscreenChang
   const [isContentFullscreen, setIsContentFullscreen] = useState(false)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const effectiveExpanded = expanded || isContentFullscreen
-  const shouldRenderBody = useDelayedRender(effectiveExpanded)
+  const shouldRenderBody = useMessageExpandRender(effectiveExpanded)
 
   // 从 input 中提取任务信息
   const input = state.input as Record<string, unknown> | undefined
@@ -108,52 +108,50 @@ export const TaskRenderer = memo(function TaskRenderer({ part, onFullscreenChang
         />
 
         {/* Body */}
-        <div className={expandGridClass(effectiveExpanded)}>
-          <div className="overflow-hidden">
-            {shouldRenderBody && (
-              <div className="pt-2 space-y-3">
-                {/* Prompt */}
-                {prompt && (
-                  <div className="text-[length:var(--fs-xs)] text-text-500 leading-relaxed whitespace-nowrap overflow-hidden text-ellipsis">
-                    {prompt}
-                  </div>
-                )}
+        <MessageExpandPanel open={effectiveExpanded} innerClassName="overflow-hidden">
+          {shouldRenderBody && (
+            <div className="pt-2 space-y-3">
+              {/* Prompt */}
+              {prompt && (
+                <div className="text-[length:var(--fs-xs)] text-text-500 leading-relaxed whitespace-nowrap overflow-hidden text-ellipsis">
+                  {prompt}
+                </div>
+              )}
 
-                {/* 子会话内容 */}
-                {targetSessionId && (
-                  <>
-                    {prompt && <hr className="border-border-200/30" />}
-                    <SubSessionView sessionId={targetSessionId} isParentRunning={isRunning} />
-                  </>
-                )}
+              {/* 子会话内容 */}
+              {targetSessionId && (
+                <>
+                  {prompt && <hr className="border-border-200/30" />}
+                  <SubSessionView sessionId={targetSessionId} isParentRunning={isRunning} />
+                </>
+              )}
 
-                {/* 完成时的输出 */}
-                {isCompleted && state.output !== undefined && state.output !== null && (
-                  <ContentBlock
-                    label={t('task.result')}
-                    stateKey={`message:${part.messageID}:tool:${part.id}:task-result`}
-                    content={typeof state.output === 'string' ? state.output : JSON.stringify(state.output, null, 2)}
-                    defaultCollapsed={true}
-                    onFullscreenChange={handleContentFullscreenChange}
-                    fullscreenId={`task:${part.sessionID}:${part.messageID}:${part.id}:result`}
-                  />
-                )}
+              {/* 完成时的输出 */}
+              {isCompleted && state.output !== undefined && state.output !== null && (
+                <ContentBlock
+                  label={t('task.result')}
+                  stateKey={`message:${part.messageID}:tool:${part.id}:task-result`}
+                  content={typeof state.output === 'string' ? state.output : JSON.stringify(state.output, null, 2)}
+                  defaultCollapsed={true}
+                  onFullscreenChange={handleContentFullscreenChange}
+                  fullscreenId={`task:${part.sessionID}:${part.messageID}:${part.id}:result`}
+                />
+              )}
 
-                {/* 错误信息 */}
-                {isError && state.error !== undefined && (
-                  <ContentBlock
-                    label={t('task.error')}
-                    stateKey={`message:${part.messageID}:tool:${part.id}:task-error`}
-                    content={typeof state.error === 'string' ? state.error : JSON.stringify(state.error)}
-                    variant="error"
-                    onFullscreenChange={handleContentFullscreenChange}
-                    fullscreenId={`task:${part.sessionID}:${part.messageID}:${part.id}:error`}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+              {/* 错误信息 */}
+              {isError && state.error !== undefined && (
+                <ContentBlock
+                  label={t('task.error')}
+                  stateKey={`message:${part.messageID}:tool:${part.id}:task-error`}
+                  content={typeof state.error === 'string' ? state.error : JSON.stringify(state.error)}
+                  variant="error"
+                  onFullscreenChange={handleContentFullscreenChange}
+                  fullscreenId={`task:${part.sessionID}:${part.messageID}:${part.id}:error`}
+                />
+              )}
+            </div>
+          )}
+        </MessageExpandPanel>
       </div>
     </div>
   )

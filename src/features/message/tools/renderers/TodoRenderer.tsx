@@ -1,10 +1,10 @@
 import { useTranslation } from 'react-i18next'
 import { ChevronDownIcon, CheckIcon, ClockIcon, CloseIcon, CircleIcon } from '../../../../components/Icons'
 import type { ToolRendererProps } from '../types'
-import { useDelayedRender, useDisclosureScrollLock } from '../../../../hooks'
+import { useDisclosureScrollLock } from '../../../../hooks'
 import { extractTodos } from './todoUtils'
 import { useUiDisclosureState } from '../../../../utils/uiDisclosureState'
-import { expandGridClass, MSG_EXPAND } from '../../messageExpand'
+import { chevronClass, MessageExpandPanel, useMessageExpandRender } from '../../messageExpand'
 
 // ============================================
 // Types
@@ -38,7 +38,7 @@ export function TodoRenderer({ part }: ToolRendererProps) {
 function TodoList({ todos, stateKey }: { todos: TodoItem[]; stateKey: string }) {
   const { t } = useTranslation('message')
   const [collapsed, setCollapsed] = useUiDisclosureState(stateKey, false)
-  const shouldRenderBody = useDelayedRender(!collapsed)
+  const shouldRenderBody = useMessageExpandRender(!collapsed)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const completed = todos.filter(t => t.status === 'completed').length
   const total = todos.length
@@ -52,7 +52,7 @@ function TodoList({ todos, stateKey }: { todos: TodoItem[]; stateKey: string }) 
         onClick={() => withScrollLock(() => setCollapsed(!collapsed))}
       >
         <div className="flex items-center gap-2">
-          <span className={`text-text-400 ${MSG_EXPAND.chevron} ${collapsed ? '-rotate-90' : ''}`}>
+          <span className={chevronClass(!collapsed, 'md', 'text-text-400')}>
             <ChevronDownIcon />
           </span>
           <span className="text-text-300 font-medium font-mono">{t('todo.tasks')}</span>
@@ -61,30 +61,28 @@ function TodoList({ todos, stateKey }: { todos: TodoItem[]; stateKey: string }) 
       </div>
 
       {/* List */}
-      <div className={expandGridClass(!collapsed)}>
-        <div className="overflow-hidden">
-          {shouldRenderBody && (
-            <div className="divide-y divide-border-200/30">
-              {todos.map(todo => (
-                <div
-                  key={todo.id}
-                  className={`flex items-center gap-2 px-3 py-2 ${
-                    todo.status === 'completed' ? 'text-text-500' : 'text-text-200'
-                  }`}
-                >
-                  <span className="shrink-0 flex items-center">{getTodoIcon(todo.status)}</span>
-                  <span className={todo.status === 'completed' ? 'line-through' : ''}>{todo.content}</span>
-                  {todo.priority === 'high' && todo.status !== 'completed' && (
-                    <span className="text-[length:var(--fs-xxs)] text-warning-100 bg-warning-100/10 px-1 rounded ml-auto shrink-0">
-                      !
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <MessageExpandPanel open={!collapsed} innerClassName="overflow-hidden">
+        {shouldRenderBody && (
+          <div className="divide-y divide-border-200/30">
+            {todos.map(todo => (
+              <div
+                key={todo.id}
+                className={`flex items-center gap-2 px-3 py-2 ${
+                  todo.status === 'completed' ? 'text-text-500' : 'text-text-200'
+                }`}
+              >
+                <span className="shrink-0 flex items-center">{getTodoIcon(todo.status)}</span>
+                <span className={todo.status === 'completed' ? 'line-through' : ''}>{todo.content}</span>
+                {todo.priority === 'high' && todo.status !== 'completed' && (
+                  <span className="text-[length:var(--fs-xxs)] text-warning-100 bg-warning-100/10 px-1 rounded ml-auto shrink-0">
+                    !
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 }

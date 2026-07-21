@@ -5,7 +5,7 @@ import { animate } from 'motion/mini'
 import { ChevronDownIcon, ChevronRightIcon, SplitIcon, SpinnerIcon, UndoIcon } from '../../components/Icons'
 import { CopyButton, SmoothHeight } from '../../components/ui'
 import { MarkdownRenderer } from '../../components/MarkdownRenderer'
-import { useCompositorExpand, useDelayedRender, useDisclosureScrollLock } from '../../hooks'
+import { useCompositorExpand, useDisclosureScrollLock } from '../../hooks'
 import { useInputCapabilities } from '../../hooks/useInputCapabilities'
 import { useNow } from '../../hooks/useNow'
 import { useTheme } from '../../hooks/useTheme'
@@ -29,7 +29,7 @@ import {
 } from './parts'
 import { extractToolData } from './tools'
 import { MSG_SPACING } from './messageSpacing'
-import { expandFadeGridClass, expandGridClass, MSG_EXPAND } from './messageExpand'
+import { MessageExpandPanel, useMessageExpandRender } from './messageExpand'
 import type {
   Message,
   Part,
@@ -122,7 +122,7 @@ export function ProcessCollapseBlock({
   stateKey: string
 }) {
   const [expanded, setExpanded] = useUiDisclosureState(stateKey, isActive)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const rootRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLButtonElement>(null)
   const unlockScrollRef = useRef<(() => void) | null>(null)
@@ -161,11 +161,9 @@ export function ProcessCollapseBlock({
         onToggle={toggleExpanded}
         headerRef={headerRef}
       />
-      <div className={expandGridClass(expanded, animateGrid)}>
-        <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: MSG_EXPAND.clipPath }}>
-          {shouldRenderBody && <div className={MSG_SPACING.processBody}>{children}</div>}
-        </div>
-      </div>
+      <MessageExpandPanel open={expanded} animate={animateGrid} clip>
+        {shouldRenderBody && <div className={MSG_SPACING.processBody}>{children}</div>}
+      </MessageExpandPanel>
     </div>
   )
 }
@@ -580,7 +578,7 @@ const UserMessageView = memo(function UserMessageView({
     `message:${info.id}:user-system-context`,
     false,
   )
-  const shouldRenderSystemContext = useDelayedRender(showSystemContext)
+  const shouldRenderSystemContext = useMessageExpandRender(showSystemContext)
   const {
     rootRef: systemContextRootRef,
     headerRef: systemContextHeaderRef,
@@ -648,17 +646,20 @@ const UserMessageView = memo(function UserMessageView({
               </span>
             </button>
 
-            <div className={`w-full ${expandFadeGridClass(showSystemContext)}`}>
-              <div className="overflow-hidden">
-                {shouldRenderSystemContext && (
-                  <div className="pt-2 flex max-w-full min-w-0 flex-wrap gap-2 justify-end">
-                    {syntheticParts.map(part => (
-                      <SyntheticTextPartView key={part.id} part={part} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <MessageExpandPanel
+              open={showSystemContext}
+              variant="fade"
+              className="w-full"
+              innerClassName="overflow-hidden"
+            >
+              {shouldRenderSystemContext && (
+                <div className="pt-2 flex max-w-full min-w-0 flex-wrap gap-2 justify-end">
+                  {syntheticParts.map(part => (
+                    <SyntheticTextPartView key={part.id} part={part} />
+                  ))}
+                </div>
+              )}
+            </MessageExpandPanel>
           </div>
         )}
 
@@ -1068,7 +1069,7 @@ const ToolGroup = memo(function ToolGroup({
     panelClassName: stepsPanelClassName,
   } = useCompositorExpand(effectiveExpanded)
   // 展开即挂工具行：默认展开时 header 与 body 同帧
-  const shouldRenderBody = useDelayedRender(stepsKeepMounted)
+  const shouldRenderBody = useMessageExpandRender(stepsKeepMounted)
 
   // compact: 单工具时用紧凑布局（图标内联，无 timeline 连接线）
   // 不区分 streaming 状态 — 单工具始终 compact，第二个工具到来时再自然过渡到 timeline
@@ -1138,13 +1139,15 @@ const ToolGroup = memo(function ToolGroup({
             </button>
           ))}
 
-        <div className={showStepsHeader ? expandGridClass(stepsLayoutOpen, true, stepsPanelClassName) : ''}>
-          <div
-            ref={showStepsHeader ? stepsExpandContentRef : undefined}
-            className={showStepsHeader ? 'flex flex-col min-h-0 min-w-0 overflow-hidden' : 'flex flex-col'}
-            style={showStepsHeader ? { clipPath: MSG_EXPAND.clipPath } : undefined}
+        {showStepsHeader ? (
+          <MessageExpandPanel
+            open={stepsLayoutOpen}
+            panelClassName={stepsPanelClassName}
+            contentRef={stepsExpandContentRef}
+            clip
+            innerClassName="flex flex-col min-h-0 min-w-0 overflow-hidden"
           >
-            {(!showStepsHeader || shouldRenderBody) &&
+            {shouldRenderBody &&
               parts.map((part, idx) => (
                 <ToolPartView
                   key={part.id}
@@ -1156,8 +1159,22 @@ const ToolGroup = memo(function ToolGroup({
                   isStreaming={isStreaming}
                 />
               ))}
+          </MessageExpandPanel>
+        ) : (
+          <div className="flex flex-col">
+            {parts.map((part, idx) => (
+              <ToolPartView
+                key={part.id}
+                part={part}
+                isFirst={idx === 0}
+                isLast={idx === parts.length - 1}
+                compact={isSingleCompact}
+                descriptive={descriptiveToolSteps}
+                isStreaming={isStreaming}
+              />
+            ))}
           </div>
-        </div>
+        )}
 
         {stepFinish && (
           <div className={MSG_SPACING.finish}>

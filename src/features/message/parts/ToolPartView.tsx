@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { diffLines } from 'diff'
 import { ChevronDownIcon, ChevronRightIcon } from '../../../components/Icons'
 import type { ToolPart } from '../../../types/message'
-import { useCompositorExpand, useDelayedRender, useDisclosureScrollLock } from '../../../hooks'
+import { useCompositorExpand, useDisclosureScrollLock } from '../../../hooks'
 import { useNow } from '../../../hooks/useNow'
 import { serverStore } from '../../../store/serverStore'
 import { useTheme } from '../../../hooks/useTheme'
@@ -26,7 +26,7 @@ import {
   hasTodos,
 } from '../tools'
 import { MSG_SPACING } from '../messageSpacing'
-import { expandGridClass } from '../messageExpand'
+import { MessageExpandPanel, useMessageExpandRender } from '../messageExpand'
 
 // ============================================
 // ToolPartView - 单个工具调用
@@ -133,7 +133,7 @@ export const ToolPartView = memo(function ToolPartView({
   const { contentRef: expandContentRef, layoutOpen, keepMounted, panelClassName } =
     useCompositorExpand(effectiveExpanded)
   // 展开即挂 body：默认展开的工具 header/body 同帧，不再先 header 后 body
-  const shouldRenderBody = useDelayedRender(keepMounted)
+  const shouldRenderBody = useMessageExpandRender(keepMounted)
   const toggleExpanded = useCallback(() => {
     withScrollLock(() => setExpanded(!expanded))
   }, [expanded, setExpanded, withScrollLock])
@@ -227,15 +227,14 @@ export const ToolPartView = memo(function ToolPartView({
   )
 
   const expandBody = (padClass: string) => (
-    <div className={expandGridClass(layoutOpen, true, panelClassName)}>
-      <div className="overflow-hidden min-h-0">
-        {shouldRenderBody && (
-          <div ref={expandContentRef} className={padClass}>
-            {bodyContent}
-          </div>
-        )}
-      </div>
-    </div>
+    <MessageExpandPanel
+      open={layoutOpen}
+      panelClassName={panelClassName}
+      contentRef={expandContentRef}
+      innerClassName="overflow-hidden min-h-0"
+    >
+      {shouldRenderBody && <div className={padClass}>{bodyContent}</div>}
+    </MessageExpandPanel>
   )
 
   if (descriptive) {

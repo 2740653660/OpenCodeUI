@@ -2,13 +2,13 @@ import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDownIcon, LightbulbIcon, SpinnerIcon } from '../../../components/Icons'
 import { ScrollArea } from '../../../components/ui'
-import { useDelayedRender, useDisclosureScrollLock } from '../../../hooks'
+import { useDisclosureScrollLock } from '../../../hooks'
 import { useTheme } from '../../../hooks/useTheme'
 import { MarkdownRenderer } from '../../../components/MarkdownRenderer'
 import type { ReasoningPart } from '../../../types/message'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
 import { MSG_SPACING } from '../messageSpacing'
-import { expandGridClass, MSG_EXPAND } from '../messageExpand'
+import { chevronClass, MessageExpandPanel, useMessageExpandRender } from '../messageExpand'
 
 // italic 默认不显示前导图标；如果后续要恢复，只改这里。
 const ITALIC_SHOW_LEADING_GLYPH = false
@@ -28,7 +28,7 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
 
   const displayText = rawText
   const [expanded, setExpanded] = useUiDisclosureState(`message:${part.messageID}:reasoning:${part.id}`, false)
-  const shouldRenderBody = useDelayedRender(expanded)
+  const shouldRenderBody = useMessageExpandRender(expanded)
   const { rootRef, headerRef, withScrollLock } = useDisclosureScrollLock()
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const summaryContainerRef = useRef<HTMLDivElement>(null)
@@ -198,27 +198,23 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
               {summaryText}
             </span>
           </div>
-          <span
-            className={`inline-flex h-5 w-3 items-center justify-center shrink-0 text-text-500 group-hover/reasoning:text-text-300 ${MSG_EXPAND.chevron} ${expanded ? '' : '-rotate-90'}`}
-          >
+          <span className={chevronClass(expanded, 'sm', 'group-hover/reasoning:text-text-300')}>
             <ChevronDownIcon size={12} />
           </span>
         </button>
 
-        <div className={expandGridClass(expanded)}>
-          <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: MSG_EXPAND.clipPath }}>
-            {shouldRenderBody &&
-              (isMarkdownMode ? (
-                <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)]`}>
-                  <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
-                </div>
-              ) : (
-                <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300`}>
-                  {displayText}
-                </div>
-              ))}
-          </div>
-        </div>
+        <MessageExpandPanel open={expanded} clip>
+          {shouldRenderBody &&
+            (isMarkdownMode ? (
+              <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)]`}>
+                <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
+              </div>
+            ) : (
+              <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300`}>
+                {displayText}
+              </div>
+            ))}
+        </MessageExpandPanel>
       </div>
     ) : (
       <div ref={summaryContainerRef} className={`relative min-w-0 overflow-hidden ${MSG_SPACING.header} text-[length:var(--fs-sm)]`}>
@@ -287,24 +283,20 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
         <span className="text-[length:var(--fs-sm)] font-medium leading-5 whitespace-nowrap text-left">
           {isPartStreaming ? t('reasoning.thinking') : t('reasoning.thinkingLabel')}
         </span>
-        <span
-          className={`inline-flex h-5 w-3 items-center justify-center shrink-0 ${MSG_EXPAND.chevron} ${expanded ? '' : '-rotate-90'}`}
-        >
+        <span className={chevronClass(expanded, 'sm')}>
           <ChevronDownIcon size={12} />
         </span>
       </button>
 
-      <div className={expandGridClass(expanded)}>
-        <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: MSG_EXPAND.clipPath }}>
-          {shouldRenderBody && (
-            <ScrollArea ref={scrollAreaRef} maxHeight={192} className="border-t border-border-300/20 bg-bg-200/30">
-              <div className="px-2 py-2 text-text-300 text-[length:var(--fs-sm)] font-mono whitespace-pre-wrap break-words overflow-x-hidden">
-                {displayText}
-              </div>
-            </ScrollArea>
-          )}
-        </div>
-      </div>
+      <MessageExpandPanel open={expanded} clip>
+        {shouldRenderBody && (
+          <ScrollArea ref={scrollAreaRef} maxHeight={192} className="border-t border-border-300/20 bg-bg-200/30">
+            <div className="px-2 py-2 text-text-300 text-[length:var(--fs-sm)] font-mono whitespace-pre-wrap break-words overflow-x-hidden">
+              {displayText}
+            </div>
+          </ScrollArea>
+        )}
+      </MessageExpandPanel>
     </div>
   )
 })
