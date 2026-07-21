@@ -39,6 +39,7 @@ import {
   type StableChatPage,
 } from './chatPageModel'
 import { useTheme } from '../../hooks/useTheme'
+import { getStreamingHotIndexes, getTimelineRowYClass, mergeVirtualRangeIndexes } from './chatAreaUtils'
 import { useAutoScroll } from './virtual/useAutoScroll'
 import { useEmptyWorkingShellGate } from './virtual/useEmptyWorkingShellGate'
 
@@ -68,20 +69,6 @@ function estimateTimelineItemSize(item: ProcessTimelineItem | undefined): number
 
 function sessionCacheKey(sessionId: string, processCollapseEnabled: boolean): string {
   return `${sessionId}:${processCollapseEnabled ? 'process' : 'flat'}`
-}
-
-/** 流式热行 index：末 1～2 行，避免 virtual range 边界卸载正在生成的行 */
-export function getStreamingHotIndexes(count: number, isStreaming: boolean): number[] {
-  if (!isStreaming || count <= 0) return []
-  if (count === 1) return [0]
-  return [count - 2, count - 1]
-}
-
-/** 合并 range 与 pin index（resize pin + 流式热行） */
-export function mergeVirtualRangeIndexes(base: number[], ...pinnedGroups: number[][]): number[] {
-  const pinned = pinnedGroups.flat()
-  if (pinned.length === 0) return base
-  return [...new Set([...pinned, ...base])].sort((a, b) => a - b)
 }
 
 // ─── 接口定义（保持不变） ───────────────────────────────────────
@@ -183,6 +170,7 @@ interface RowProps {
   item: ProcessTimelineItem
   maxWidthClass: string
   paddingClass: string
+  rowYClass: string
   registerMessage?: (id: string, element: HTMLElement | null) => void
   onUndo?: (userMessageId: string) => void
   onFork?: (message: Message, forkMessageId?: string) => void | Promise<void>
@@ -200,6 +188,7 @@ const VirtualRow = memo(function VirtualRow({
   item,
   maxWidthClass,
   paddingClass,
+  rowYClass,
   registerMessage,
   onUndo,
   onFork,
@@ -220,7 +209,7 @@ const VirtualRow = memo(function VirtualRow({
 
   useLayoutEffect(() => {
     if (rowRef.current) measureElement(rowRef.current)
-  }, [measureElement, virtualItem.index, item.key])
+  }, [measureElement, virtualItem.index, item.key, rowYClass])
 
   return (
     <div
@@ -229,7 +218,7 @@ const VirtualRow = memo(function VirtualRow({
       data-index={virtualItem.index}
       style={{ position: 'absolute', top: 0, left: 0, width: '100%' }}
     >
-      <div className={`w-full ${maxWidthClass} mx-auto ${paddingClass} py-3 transition-[max-width] duration-300 ease-in-out`}>
+      <div className={`w-full ${maxWidthClass} mx-auto ${paddingClass} ${rowYClass} transition-[max-width] duration-300 ease-in-out`}>
         {item.kind === 'message' ? (
           <MessageBody
             message={item.message}
@@ -301,6 +290,7 @@ const VirtualRow = memo(function VirtualRow({
   prev.item === next.item &&
   prev.maxWidthClass === next.maxWidthClass &&
   prev.paddingClass === next.paddingClass &&
+  prev.rowYClass === next.rowYClass &&
   prev.registerMessage === next.registerMessage &&
   prev.onUndo === next.onUndo &&
   prev.onFork === next.onFork &&
@@ -914,6 +904,11 @@ export const ChatArea = memo(
                     item={timelineItem}
                     maxWidthClass={maxWidthClass}
                     paddingClass={paddingClass}
+                    rowYClass={getTimelineRowYClass(
+                      timelineItem,
+                      timeline[item.index - 1],
+                      timeline[item.index + 1],
+                    )}
                     registerMessage={registerMessage}
                     onUndo={onUndo}
                     onFork={onFork}

@@ -15,7 +15,7 @@ import {
   reuseProcessTimelineItems,
   seedMeasuredPageHeightsFromPreviousPages,
 } from './chatPageModel'
-import { getStreamingHotIndexes, mergeVirtualRangeIndexes } from './ChatArea'
+import { getStreamingHotIndexes, getTimelineRowYClass, mergeVirtualRangeIndexes } from './chatAreaUtils'
 import { buildVisibleMessageEntries, getVisibleMessageForkTargetId } from './chatAreaVisibility'
 import { buildChatPageViewModel } from './useChatPageViewModel'
 import type { Message, MessageError, Part, ToolPart, ReasoningPart } from '../../types/message'
@@ -465,6 +465,46 @@ describe('streaming virtual range helpers', () => {
   it('merges pinned indexes into the virtual range without duplicates', () => {
     expect(mergeVirtualRangeIndexes([1, 2, 3], [], [])).toEqual([1, 2, 3])
     expect(mergeVirtualRangeIndexes([1, 2, 3], [8, 9], [3, 9])).toEqual([1, 2, 3, 8, 9])
+  })
+})
+
+describe('getTimelineRowYClass', () => {
+  it('keeps turn padding on user rows and process shells', () => {
+    const user = { kind: 'message' as const, key: 'user-1', message: createUserMessage('user-1', 1) }
+    const shell = {
+      kind: 'process-shell' as const,
+      key: 'process-shell:user-1',
+      userMessageId: 'user-1',
+      startedAt: 1,
+      isActive: false,
+      children: [],
+    }
+    expect(getTimelineRowYClass(user)).toBe('py-3')
+    expect(getTimelineRowYClass(shell)).toBe('py-3')
+  })
+
+  it('tightens vertical padding between consecutive assistant rows', () => {
+    const prev = {
+      kind: 'message' as const,
+      key: 'assistant-1',
+      message: createAssistantMessage('assistant-1', [], 1, 2),
+    }
+    const current = {
+      kind: 'message' as const,
+      key: 'assistant-2',
+      message: createAssistantMessage('assistant-2', [], 3, 4),
+    }
+    const next = {
+      kind: 'message' as const,
+      key: 'assistant-3',
+      message: createAssistantMessage('assistant-3', [], 5, 6),
+    }
+    const user = { kind: 'message' as const, key: 'user-2', message: createUserMessage('user-2', 7) }
+
+    expect(getTimelineRowYClass(current, prev, next)).toBe('py-1')
+    expect(getTimelineRowYClass(current, user, next)).toBe('pt-3 pb-1')
+    expect(getTimelineRowYClass(current, prev, user)).toBe('pt-1 pb-3')
+    expect(getTimelineRowYClass(current, user, user)).toBe('py-3')
   })
 })
 
