@@ -827,7 +827,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
     // 有错误时直接显示错误信息
     if (messageError) {
       return (
-        <div className="flex flex-col gap-2 w-full">
+        <div className={`flex flex-col ${MSG_SPACING.stack} w-full`}>
           <MessageErrorView error={messageError} stateKey={`message:${message.info.id}:error`} />
         </div>
       )
@@ -843,10 +843,10 @@ const AssistantMessageView = memo(function AssistantMessageView({
   }
 
   return (
-    <div ref={wrapperRef} className="flex flex-col gap-2 w-full group">
+    <div ref={wrapperRef} className={`flex flex-col ${MSG_SPACING.stack} w-full group`}>
       {/* 流式增高走自然撑开 + 贴底 scroll，默认不做 height 补间，避免每帧 layout/remeasure */}
       <SmoothHeight isActive={!!isStreaming && allowStreamingLayoutAnimation && processContentScope === 'all'}>
-        <div className="flex flex-col gap-2">
+        <div className={`flex flex-col ${MSG_SPACING.stack}`}>
           {renderItems.map((item: RenderItem, idx: number) => {
             // 本消息内最后一个含 stepFinish 的 item（耗时/完成时刻只挂这里）
             const isLastStepFinish =
@@ -893,6 +893,7 @@ const AssistantMessageView = memo(function AssistantMessageView({
               }
               case 'step-finish':
                 if (!showStepFinish) return null
+                // 独立 step-finish 靠 stack gap 取距；与 ToolGroup 内 MSG_SPACING.finish 等距
                 return (
                   <StepFinishPartView
                     key={part.id}

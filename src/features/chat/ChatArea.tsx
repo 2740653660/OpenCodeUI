@@ -158,7 +158,7 @@ const MessageBody = memo(function MessageBody({
       data-anchor-source-id={forkMessageId ?? messageId}
     >
       <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-        <div className={`message-renderer-shell min-w-0 group ${!isUser ? 'w-full' : ''} flex flex-col gap-2`}>
+        <div className={`message-renderer-shell min-w-0 group ${!isUser ? 'w-full' : ''}`}>
           <MessageRenderer
             message={message}
             allowStreamingLayoutAnimation={message.isStreaming ? allowStreamingLayoutAnimation : false}
@@ -273,6 +273,7 @@ const VirtualRow = memo(function VirtualRow({
                   />
                 ))}
               </ProcessCollapseBlock>
+              {/* shell 的 gap-2 只服务 process 壳 ↔ final 文本，子消息间距由 processBody 管 */}
               {item.finalMessage && (
                 <MessageBody
                   message={item.finalMessage}

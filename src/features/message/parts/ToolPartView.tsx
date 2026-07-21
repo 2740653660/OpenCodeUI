@@ -202,7 +202,7 @@ export const ToolPartView = memo(function ToolPartView({
         <ToolBody part={part} data={toolData} onFullscreenChange={handleFullscreenChange} />
       )}
       {displayPermission && (
-        <div className={hideToolBodyForPermission && !permissionContentHidden ? '' : 'pt-2'}>
+        <div className={hideToolBodyForPermission && !permissionContentHidden ? '' : MSG_SPACING.inner}>
           <InlinePermission
             request={displayPermission}
             onReply={onPermissionReply}
@@ -213,7 +213,7 @@ export const ToolPartView = memo(function ToolPartView({
         </div>
       )}
       {questionRequest && (
-        <div className="pt-2">
+        <div className={MSG_SPACING.inner}>
           <InlineQuestion
             request={questionRequest}
             onReply={onQuestionReply}
