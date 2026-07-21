@@ -11,7 +11,10 @@ function isAssistantMessageItem(item: ProcessTimelineItem | undefined): boolean 
   return item?.kind === 'message' && item.message.info.role === 'assistant'
 }
 
-/** 用户和过程壳保留回合边界；连续助手按消息内 stack 节奏收紧 */
+/**
+ * 用户和过程壳保留回合边界；连续助手按消息内 stack 节奏收紧。
+ * 连续助手 py-1+py-1=8px，与 MSG_SPACING.stack / processBody 的 gap-2 同距。
+ */
 export function getTimelineRowYClass(
   item: ProcessTimelineItem,
   prev?: ProcessTimelineItem,
