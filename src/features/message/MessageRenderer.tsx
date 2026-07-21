@@ -28,6 +28,7 @@ import {
   MessageErrorView,
 } from './parts'
 import { extractToolData } from './tools'
+import { MSG_SPACING } from './messageSpacing'
 import type {
   Message,
   Part,
@@ -95,7 +96,7 @@ const ProcessCollapseHeader = memo(function ProcessCollapseHeader({
       ref={headerRef}
       type="button"
       onClick={onToggle}
-      className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
+      className={`flex w-full items-center gap-1.5 rounded-md ${MSG_SPACING.header} text-left text-[length:var(--fs-sm)] leading-5 text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors`}
     >
       <span className={isActive ? 'reasoning-shimmer-text' : 'text-text-400'}>{label}</span>
       <span className="inline-flex items-center justify-center text-text-500">
@@ -171,7 +172,7 @@ export function ProcessCollapseBlock({
         }
       >
         <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: 'inset(0 -100% 0 -100%)' }}>
-          {shouldRenderBody && <div className="flex flex-col gap-2 pt-1">{children}</div>}
+          {shouldRenderBody && <div className={MSG_SPACING.processBody}>{children}</div>}
         </div>
       </div>
     </div>
@@ -1097,7 +1098,7 @@ const ToolGroup = memo(function ToolGroup({
               type="button"
               ref={stepsHeaderRef}
               onClick={() => withStepsScrollLock(() => setExpanded(!expanded))}
-              className="flex w-full items-baseline rounded-md py-1 text-left hover:bg-bg-200/30 transition-colors"
+              className={`flex w-full items-baseline rounded-md ${MSG_SPACING.header} text-left hover:bg-bg-200/30 transition-colors`}
             >
               <span className="text-[length:var(--fs-sm)] leading-5">
                 {stepsSummary?.map((seg, i) => (
@@ -1129,7 +1130,7 @@ const ToolGroup = memo(function ToolGroup({
               type="button"
               ref={stepsHeaderRef}
               onClick={() => withStepsScrollLock(() => setExpanded(!expanded))}
-              className="flex items-center gap-1.5 py-1 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
+              className={`flex items-center gap-1.5 ${MSG_SPACING.header} text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors`}
             >
               <span className="inline-flex w-[14px] items-center justify-center shrink-0">
                 {effectiveExpanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
@@ -1177,7 +1178,7 @@ const ToolGroup = memo(function ToolGroup({
         </div>
 
         {stepFinish && (
-          <div className="mt-1">
+          <div className={MSG_SPACING.finish}>
             <StepFinishPartView
               part={stepFinish}
               duration={duration}

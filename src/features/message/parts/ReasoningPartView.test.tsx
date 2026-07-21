@@ -56,7 +56,9 @@ describe('ReasoningPartView', () => {
     })
 
     expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
-    expect(screen.getByText('Thinking...')).toBeInTheDocument()
+    const thinking = screen.getByText('Thinking...')
+    expect(thinking).toBeInTheDocument()
+    expect(thinking.className).toContain('reasoning-shimmer-text')
     expect(screen.getAllByText('thinking through steps...').length).toBeGreaterThan(0)
     expect(screen.queryByTestId('markdown-content')).not.toBeInTheDocument()
   })

@@ -142,4 +142,13 @@ describe('ToolPartView running duration', () => {
 
     expect(screen.getByText('123ms')).toBeInTheDocument()
   })
+
+  it('uses shared item spacing on compact and descriptive roots', () => {
+    const part = createRunningToolPart()
+    const { container, rerender } = render(<ToolPartView part={part} compact />)
+    expect(container.firstElementChild?.className).toContain('pt-1')
+
+    rerender(<ToolPartView part={part} descriptive />)
+    expect(container.firstElementChild?.className).toContain('pt-1')
+  })
 })

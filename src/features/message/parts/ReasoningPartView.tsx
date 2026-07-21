@@ -7,6 +7,7 @@ import { useTheme } from '../../../hooks/useTheme'
 import { MarkdownRenderer } from '../../../components/MarkdownRenderer'
 import type { ReasoningPart } from '../../../types/message'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
+import { MSG_SPACING } from '../messageSpacing'
 
 // italic 默认不显示前导图标；如果后续要恢复，只改这里。
 const ITALIC_SHOW_LEADING_GLYPH = false
@@ -143,7 +144,7 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
       '[&_br]:hidden',
     ].join(' ')
 
-    // 与工具 steps / 过程折叠块对齐：header 用 py-1，根节点不再额外加 py
+    // 与工具 steps / 过程折叠块对齐：header 用 MSG_SPACING.header，根节点不再额外加 py
     const content = shouldUseToggle ? (
       <div className="flex flex-col">
         <button
@@ -151,12 +152,21 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
           ref={headerRef}
           onClick={toggleExpanded}
           aria-expanded={expanded}
-          className="group/reasoning flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 m-0 border-0 bg-transparent text-left cursor-pointer text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors"
+          className={`group/reasoning flex w-full min-w-0 items-center gap-1.5 rounded-md ${MSG_SPACING.header} m-0 border-0 bg-transparent text-left cursor-pointer text-text-400 hover:bg-bg-200/30 hover:text-text-200 transition-colors`}
         >
           <div ref={summaryContainerRef} className="relative min-w-0 flex-1 overflow-hidden">
             <span className="relative block min-w-0 max-w-full">
               {expanded ? (
-                <span className={`block min-w-0 ${isMarkdownMode ? '' : 'italic '} ${summaryClassName} ${isPartStreaming ? 'reasoning-shimmer-text' : ''}`}>
+                <span
+                  className={[
+                    'block min-w-0',
+                    isMarkdownMode ? '' : 'italic',
+                    summaryClassName,
+                    isPartStreaming ? 'reasoning-shimmer-text' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
                   {expandedMetaText}
                 </span>
               ) : isMarkdownMode ? (
@@ -168,7 +178,15 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
                   />
                 </div>
               ) : (
-                <span className={`block min-w-0 italic ${summaryClassName} ${isPartStreaming ? 'reasoning-shimmer-text' : ''}`}>
+                <span
+                  className={[
+                    'block min-w-0 italic',
+                    summaryClassName,
+                    isPartStreaming ? 'reasoning-shimmer-text' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
                   {summaryText}
                 </span>
               )}
@@ -198,11 +216,11 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
           <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: 'inset(0 -100% 0 -100%)' }}>
             {shouldRenderBody &&
               (isMarkdownMode ? (
-                <div className="pt-1 text-[length:var(--fs-sm)]">
+                <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)]`}>
                   <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
                 </div>
               ) : (
-                <div className="pt-1 text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300">
+                <div className={`${MSG_SPACING.body} text-[length:var(--fs-sm)] leading-6 italic whitespace-pre-wrap break-words overflow-x-hidden text-text-300`}>
                   {displayText}
                 </div>
               ))}
@@ -210,7 +228,7 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
         </div>
       </div>
     ) : (
-      <div ref={summaryContainerRef} className="relative min-w-0 overflow-hidden py-1 text-[length:var(--fs-sm)]">
+      <div ref={summaryContainerRef} className={`relative min-w-0 overflow-hidden ${MSG_SPACING.header} text-[length:var(--fs-sm)]`}>
         {isMarkdownMode ? (
           <MarkdownRenderer content={displayText} variant="reasoning" isStreaming={isPartStreaming} />
         ) : (
