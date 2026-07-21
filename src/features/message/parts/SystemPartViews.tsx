@@ -5,6 +5,7 @@ import { useDelayedRender } from '../../../hooks/useDelayedRender'
 import { useDisclosureScrollLock } from '../../../hooks'
 import type { RetryPart, CompactionPart, PatchPart } from '../../../types/message'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
+import { chevronClass, expandFadeGridClass } from '../messageExpand'
 
 // ============================================
 // Retry Part View - 显示重试状态
@@ -43,16 +44,10 @@ export const RetryPartView = memo(function RetryPartView({ part }: RetryPartView
             {t('system.retryable')}
           </span>
         )}
-        <ChevronDownIcon
-          className={`w-4 h-4 text-text-400 transition-transform duration-300 ${expanded ? '' : '-rotate-90'}`}
-        />
+        <ChevronDownIcon className={chevronClass(expanded)} />
       </button>
 
-      <div
-        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-        }`}
-      >
+      <div className={expandFadeGridClass(expanded)}>
         <div className="overflow-hidden">
           {shouldRenderBody && (
             <div className="mt-2 pt-2 border-t border-warning-100/20">
@@ -123,16 +118,10 @@ export const PatchPartView = memo(function PatchPartView({ part }: PatchPartView
           <span className="text-[length:var(--fs-base)] text-text-200">{t('system.filesChanged', { count: fileCount })}</span>
           <span className="text-[length:var(--fs-sm)] text-text-500 ml-2 font-mono">{hash.slice(0, 7)}</span>
         </div>
-        <ChevronDownIcon
-          className={`w-4 h-4 text-text-400 transition-transform duration-300 ${expanded ? '' : '-rotate-90'}`}
-        />
+        <ChevronDownIcon className={chevronClass(expanded)} />
       </button>
 
-      <div
-        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-        }`}
-      >
+      <div className={expandFadeGridClass(expanded)}>
         <div className="overflow-hidden">
           {shouldRenderBody && (
             <div className="px-3 py-2 border-t border-border-200/40 space-y-1">

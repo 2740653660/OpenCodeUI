@@ -26,6 +26,7 @@ import {
   hasTodos,
 } from '../tools'
 import { MSG_SPACING } from '../messageSpacing'
+import { expandGridClass } from '../messageExpand'
 
 // ============================================
 // ToolPartView - 单个工具调用
@@ -226,7 +227,7 @@ export const ToolPartView = memo(function ToolPartView({
   )
 
   const expandBody = (padClass: string) => (
-    <div className={`grid ${panelClassName} ${layoutOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+    <div className={expandGridClass(layoutOpen, true, panelClassName)}>
       <div className="overflow-hidden min-h-0">
         {shouldRenderBody && (
           <div ref={expandContentRef} className={padClass}>

@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useCompositorExpand } from './useCompositorExpand'
+import { COMPOSITOR_GRID_TRANSITION, useCompositorExpand } from './useCompositorExpand'
 
 const { userAgentSpy } = vi.hoisted(() => ({
   userAgentSpy: vi.fn(() => 'Mozilla/5.0'),
@@ -26,7 +26,7 @@ describe('useCompositorExpand', () => {
     })
 
     expect(result.current.layoutOpen).toBe(false)
-    expect(result.current.panelClassName).toContain('transition-')
+    expect(result.current.panelClassName).toBe(COMPOSITOR_GRID_TRANSITION)
     expect(result.current.keepMounted).toBe(false)
 
     rerender({ open: true })

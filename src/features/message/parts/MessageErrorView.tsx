@@ -6,6 +6,7 @@ import { useDelayedRender } from '../../../hooks/useDelayedRender'
 import { useDisclosureScrollLock } from '../../../hooks'
 import { CodeBlock } from '../../../components/CodeBlock'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
+import { chevronClass, expandFadeGridClass } from '../messageExpand'
 
 interface MessageErrorViewProps {
   error: MessageError
@@ -57,18 +58,10 @@ export const MessageErrorView = memo(function MessageErrorView({ error, stateKey
       >
         <AlertCircleIcon className={`w-4 h-4 ${colorClass} flex-shrink-0`} />
         <span className={`text-[length:var(--fs-base)] ${colorClass} flex-1 min-w-0 truncate`}>{title}</span>
-        {hasDetails && (
-          <ChevronDownIcon
-            className={`w-4 h-4 text-text-400 transition-transform duration-300 ${expanded ? '' : '-rotate-90'}`}
-          />
-        )}
+        {hasDetails && <ChevronDownIcon className={chevronClass(expanded)} />}
       </div>
 
-      <div
-        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-        }`}
-      >
+      <div className={expandFadeGridClass(expanded)}>
         <div className="overflow-hidden">
           {shouldRenderBody && (
             <div className={`mt-2 pt-2 space-y-1.5 border-t ${borderClass}`}>

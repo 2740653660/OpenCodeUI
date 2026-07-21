@@ -6,7 +6,9 @@ function isAndroid(): boolean {
 
 const DURATION_MS = 260
 const EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
-const GRID_TRANSITION_CLASS = 'transition-[grid-template-rows] duration-300 ease-in-out'
+/** 桌面 grid 展开动画；消息流 MSG_EXPAND.panel 与此保持同一字符串 */
+export const COMPOSITOR_GRID_TRANSITION =
+  'transition-[grid-template-rows] duration-300 ease-in-out'
 
 /**
  * Android expand blank fix:
@@ -101,7 +103,7 @@ export function useCompositorExpand(open: boolean) {
       contentRef: contentRef as RefObject<HTMLDivElement | null>,
       layoutOpen: open,
       keepMounted: open,
-      panelClassName: GRID_TRANSITION_CLASS,
+      panelClassName: COMPOSITOR_GRID_TRANSITION,
     }
   }
 
@@ -109,7 +111,7 @@ export function useCompositorExpand(open: boolean) {
     contentRef: contentRef as RefObject<HTMLDivElement | null>,
     layoutOpen,
     keepMounted: open || layoutOpen || keepAnimating,
-    panelClassName: useGridTransition ? GRID_TRANSITION_CLASS : '',
+    panelClassName: useGridTransition ? COMPOSITOR_GRID_TRANSITION : '',
   }
 }
 

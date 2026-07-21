@@ -29,6 +29,7 @@ import {
 } from './parts'
 import { extractToolData } from './tools'
 import { MSG_SPACING } from './messageSpacing'
+import { expandFadeGridClass, expandGridClass, MSG_EXPAND } from './messageExpand'
 import type {
   Message,
   Part,
@@ -160,18 +161,8 @@ export function ProcessCollapseBlock({
         onToggle={toggleExpanded}
         headerRef={headerRef}
       />
-      <div
-        className={
-          animateGrid
-            ? `grid transition-[grid-template-rows] duration-300 ease-in-out ${
-                expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-              }`
-            : expanded
-              ? 'grid grid-rows-[1fr]'
-              : 'grid grid-rows-[0fr]'
-        }
-      >
-        <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: 'inset(0 -100% 0 -100%)' }}>
+      <div className={expandGridClass(expanded, animateGrid)}>
+        <div className="min-h-0 min-w-0 overflow-hidden" style={{ clipPath: MSG_EXPAND.clipPath }}>
           {shouldRenderBody && <div className={MSG_SPACING.processBody}>{children}</div>}
         </div>
       </div>
@@ -657,11 +648,7 @@ const UserMessageView = memo(function UserMessageView({
               </span>
             </button>
 
-            <div
-              className={`grid w-full transition-[grid-template-rows,opacity] duration-300 ease-out ${
-                showSystemContext ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-              }`}
-            >
+            <div className={`w-full ${expandFadeGridClass(showSystemContext)}`}>
               <div className="overflow-hidden">
                 {shouldRenderSystemContext && (
                   <div className="pt-2 flex max-w-full min-w-0 flex-wrap gap-2 justify-end">
@@ -1151,17 +1138,11 @@ const ToolGroup = memo(function ToolGroup({
             </button>
           ))}
 
-        <div
-          className={
-            showStepsHeader
-              ? `grid ${stepsPanelClassName} ${stepsLayoutOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`
-              : ''
-          }
-        >
+        <div className={showStepsHeader ? expandGridClass(stepsLayoutOpen, true, stepsPanelClassName) : ''}>
           <div
             ref={showStepsHeader ? stepsExpandContentRef : undefined}
             className={showStepsHeader ? 'flex flex-col min-h-0 min-w-0 overflow-hidden' : 'flex flex-col'}
-            style={showStepsHeader ? { clipPath: 'inset(0 -100% 0 -100%)' } : undefined}
+            style={showStepsHeader ? { clipPath: MSG_EXPAND.clipPath } : undefined}
           >
             {(!showStepsHeader || shouldRenderBody) &&
               parts.map((part, idx) => (

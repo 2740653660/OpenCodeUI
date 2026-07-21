@@ -10,6 +10,7 @@ import { sessionErrorHandler } from '../../../../utils'
 import { formatToolName } from '../../../../utils/formatUtils'
 import { useUiDisclosureState } from '../../../../utils/uiDisclosureState'
 import type { ToolRendererProps } from '../types'
+import { expandGridClass } from '../../messageExpand'
 import type { Message, TextPart, ToolPart } from '../../../../types/message'
 import { isVisibleTextPart } from '../../../../types/message'
 
@@ -107,11 +108,7 @@ export const TaskRenderer = memo(function TaskRenderer({ part, onFullscreenChang
         />
 
         {/* Body */}
-        <div
-          className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-            effectiveExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-          }`}
-        >
+        <div className={expandGridClass(effectiveExpanded)}>
           <div className="overflow-hidden">
             {shouldRenderBody && (
               <div className="pt-2 space-y-3">

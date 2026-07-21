@@ -6,6 +6,7 @@ import { useSessionNavigation } from '../../../contexts/SessionNavigationContext
 import { useDelayedRender, useDisclosureScrollLock } from '../../../hooks'
 import { UsersIcon, ChevronDownIcon, LayersIcon, TerminalIcon, ReturnIcon } from '../../../components/Icons'
 import { useUiDisclosureState } from '../../../utils/uiDisclosureState'
+import { chevronClass, expandGridClass } from '../messageExpand'
 
 interface SubtaskPartViewProps {
   part: SubtaskPart
@@ -94,18 +95,12 @@ export const SubtaskPartView = memo(function SubtaskPartView({ part }: SubtaskPa
               {t('subtask.enter')}
             </button>
           )}
-          <ChevronDownIcon
-            className={`text-text-400 transition-transform duration-200 ${expanded ? '' : '-rotate-90'}`}
-          />
+          <ChevronDownIcon className={chevronClass(expanded, 'text-text-400')} />
         </div>
       </div>
 
       {/* Expanded content */}
-      <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-        }`}
-      >
+      <div className={expandGridClass(expanded)}>
         <div className="overflow-hidden">
           {shouldRenderBody && (
             <div className="px-4 py-3 border-t border-border-200/40 space-y-3">

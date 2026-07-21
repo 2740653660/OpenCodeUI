@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDownIcon, RetryIcon } from '../../components/Icons'
 import { useDelayedRender } from '../../hooks/useDelayedRender'
 import { useNow } from '../../hooks/useNow'
+import { chevronClass, expandFadeGridClass } from '../message/messageExpand'
 
 export interface RetryStatusInlineData {
   sessionID: string
@@ -50,9 +51,7 @@ export const RetryStatusInline = memo(function RetryStatusInline({ status }: { s
               </span>
             )}
           </span>
-          <ChevronDownIcon
-            className={`w-4 h-4 text-text-400 transition-transform duration-300 ${expanded ? '' : '-rotate-90'}`}
-          />
+          <ChevronDownIcon className={chevronClass(expanded)} />
         </button>
       ) : (
         <div className="flex items-center gap-2 min-w-0">
@@ -69,11 +68,7 @@ export const RetryStatusInline = memo(function RetryStatusInline({ status }: { s
       )}
 
       {hasMessage && (
-        <div
-          className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
-            expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-          }`}
-        >
+        <div className={expandFadeGridClass(expanded)}>
           <div className="overflow-hidden">
             {shouldRenderBody && (
               <div className="mt-2 pt-2 border-t border-warning-100/20">

@@ -4,6 +4,7 @@ import type { ToolRendererProps } from '../types'
 import { useDelayedRender, useDisclosureScrollLock } from '../../../../hooks'
 import { extractTodos } from './todoUtils'
 import { useUiDisclosureState } from '../../../../utils/uiDisclosureState'
+import { expandGridClass, MSG_EXPAND } from '../../messageExpand'
 
 // ============================================
 // Types
@@ -51,7 +52,7 @@ function TodoList({ todos, stateKey }: { todos: TodoItem[]; stateKey: string }) 
         onClick={() => withScrollLock(() => setCollapsed(!collapsed))}
       >
         <div className="flex items-center gap-2">
-          <span className={`text-text-400 transition-transform duration-200 ${collapsed ? '-rotate-90' : ''}`}>
+          <span className={`text-text-400 ${MSG_EXPAND.chevron} ${collapsed ? '-rotate-90' : ''}`}>
             <ChevronDownIcon />
           </span>
           <span className="text-text-300 font-medium font-mono">{t('todo.tasks')}</span>
@@ -60,11 +61,7 @@ function TodoList({ todos, stateKey }: { todos: TodoItem[]; stateKey: string }) 
       </div>
 
       {/* List */}
-      <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
-          collapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
-        }`}
-      >
+      <div className={expandGridClass(!collapsed)}>
         <div className="overflow-hidden">
           {shouldRenderBody && (
             <div className="divide-y divide-border-200/30">
