@@ -122,13 +122,18 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
       : thoughtDurationLabel
         ? t('reasoning.thoughtFor', { duration: thoughtDurationLabel })
         : t('reasoning.thoughtProcess')
-    const summaryClassName = expanded
-      ? isPartStreaming
-        ? 'text-[length:var(--fs-sm)] leading-5 text-text-200'
-        : 'text-[length:var(--fs-sm)] leading-5 text-text-500/80'
-      : isPartStreaming
-        ? 'text-[length:var(--fs-sm)] leading-5 text-text-200 whitespace-nowrap overflow-hidden text-ellipsis'
-        : 'text-[length:var(--fs-sm)] leading-5 text-text-300 whitespace-nowrap overflow-hidden text-ellipsis'
+    // 展开态状态行：inline-block 按文字宽度铺渐变（block 会铺满父级，短词像整段闪）
+    // italic 模式保留斜体；扫光靠 layout，不靠去掉 italic
+    const expandedMetaClassName = [
+      'inline-block text-[length:var(--fs-sm)] leading-5',
+      isMarkdownMode ? '' : 'italic',
+      isPartStreaming ? 'reasoning-shimmer-text' : 'text-text-400',
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const summaryClassName = isPartStreaming
+      ? 'text-[length:var(--fs-sm)] leading-5 text-text-200 whitespace-nowrap overflow-hidden text-ellipsis'
+      : 'text-[length:var(--fs-sm)] leading-5 text-text-300 whitespace-nowrap overflow-hidden text-ellipsis'
     // 折叠态 markdown：只渲染第一行 + 单行省略号（对齐斜体）
     const collapsedMarkdownClassName = [
       'h-5 max-h-5 overflow-hidden whitespace-nowrap text-ellipsis',
@@ -158,16 +163,7 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
           <div ref={summaryContainerRef} className="relative min-w-0 flex-1 overflow-hidden">
             <span className="relative block min-w-0 max-w-full">
               {expanded ? (
-                <span
-                  className={[
-                    'block min-w-0',
-                    isMarkdownMode ? '' : 'italic',
-                    summaryClassName,
-                    isPartStreaming ? 'reasoning-shimmer-text' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                >
+                <span className={expandedMetaClassName}>
                   {expandedMetaText}
                 </span>
               ) : isMarkdownMode ? (
