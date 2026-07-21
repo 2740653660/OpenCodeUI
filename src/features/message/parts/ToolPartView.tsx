@@ -230,7 +230,7 @@ export const ToolPartView = memo(function ToolPartView({
     const diffStats = toolData.diffStats || computeDiffStatsFromData(toolData)
 
     return (
-      <div ref={rootRef} className="group py-0.5">
+      <div ref={rootRef} className="group pt-0.5">
         <button
           type="button"
           ref={headerRef}
@@ -287,7 +287,7 @@ export const ToolPartView = memo(function ToolPartView({
         >
           <div className="overflow-hidden min-h-0">
             {shouldRenderBody && (
-              <div ref={expandContentRef} className="pb-2 pt-1">
+              <div ref={expandContentRef} className="pt-1">
                 {bodyContent}
               </div>
             )}
@@ -301,7 +301,7 @@ export const ToolPartView = memo(function ToolPartView({
   // Grid: [14px icon] [gap 6px] [content] — mirrors ReasoningPartView alignment
   if (compact) {
     return (
-      <div ref={rootRef} className="group relative grid grid-cols-[14px_minmax(0,1fr)] gap-x-1.5 items-start py-1">
+      <div ref={rootRef} className="group relative grid grid-cols-[14px_minmax(0,1fr)] gap-x-1.5 items-start pt-1">
         {/* Icon column — fixed, outside of interactive area */}
         <span className="inline-flex h-9 w-[14px] items-center justify-center shrink-0">{toolIcon}</span>
 
@@ -373,7 +373,7 @@ export const ToolPartView = memo(function ToolPartView({
           >
             <div className="overflow-hidden min-h-0">
               {shouldRenderBody && (
-                <div ref={expandContentRef} className="pl-2 pr-2.5 pb-2 pt-1">
+                <div ref={expandContentRef} className="pl-2 pr-2.5 pt-1">
                   {bodyContent}
                 </div>
               )}
@@ -470,7 +470,7 @@ export const ToolPartView = memo(function ToolPartView({
         >
           <div className="overflow-hidden min-h-0">
             {shouldRenderBody && (
-              <div ref={expandContentRef} className="pl-2 pr-2.5 pb-2 pt-1">
+              <div ref={expandContentRef} className="pl-2 pr-2.5 pt-1">
                 {bodyContent}
               </div>
             )}

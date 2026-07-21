@@ -1129,7 +1129,7 @@ const ToolGroup = memo(function ToolGroup({
               type="button"
               ref={stepsHeaderRef}
               onClick={() => withStepsScrollLock(() => setExpanded(!expanded))}
-              className="flex items-center gap-1.5 py-1.5 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
+              className="flex items-center gap-1.5 py-1 text-text-400 text-[length:var(--fs-base)] hover:text-text-200 hover:bg-bg-200/30 rounded-md transition-colors"
             >
               <span className="inline-flex w-[14px] items-center justify-center shrink-0">
                 {effectiveExpanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
@@ -1177,7 +1177,7 @@ const ToolGroup = memo(function ToolGroup({
         </div>
 
         {stepFinish && (
-          <div className="mt-2">
+          <div className="mt-1">
             <StepFinishPartView
               part={stepFinish}
               duration={duration}

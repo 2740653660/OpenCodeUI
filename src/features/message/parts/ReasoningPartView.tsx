@@ -156,7 +156,7 @@ export const ReasoningPartView = memo(function ReasoningPartView({ part, isStrea
           <div ref={summaryContainerRef} className="relative min-w-0 flex-1 overflow-hidden">
             <span className="relative block min-w-0 max-w-full">
               {expanded ? (
-                <span className={`block min-w-0 ${isMarkdownMode ? '' : 'italic '} ${summaryClassName}`}>
+                <span className={`block min-w-0 ${isMarkdownMode ? '' : 'italic '} ${summaryClassName} ${isPartStreaming ? 'reasoning-shimmer-text' : ''}`}>
                   {expandedMetaText}
                 </span>
               ) : isMarkdownMode ? (
