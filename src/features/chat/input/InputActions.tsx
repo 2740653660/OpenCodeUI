@@ -17,7 +17,7 @@ export function PresenceItem({ show, children }: { show: boolean; children: Reac
   })
   if (!shouldRender) return null
   return (
-    <div ref={ref} className="shrink-0">
+    <div ref={ref} className="shrink-0 pointer-events-auto">
       {children}
     </div>
   )
@@ -37,7 +37,7 @@ export const ScrollToBottomButton = memo(function ScrollToBottomButton({ onClick
     <button
       type="button"
       onClick={onClick}
-      className="h-[32px] w-[32px] min-w-[32px] rounded-full bg-accent-main-100/10 border border-accent-main-100/20 backdrop-blur-md flex items-center justify-center text-accent-main-000 hover:bg-accent-main-100/20 transition-colors shrink-0"
+      className="h-[32px] w-[32px] min-w-[32px] rounded-full bg-accent-main-100/10 border border-accent-main-100/20 backdrop-blur-md flex items-center justify-center text-accent-main-000 hover:bg-accent-main-100/20 transition-colors shrink-0 pointer-events-auto"
       aria-label={t('inputActions.scrollToBottom')}
     >
       <ArrowDownIcon size={16} />
@@ -74,7 +74,7 @@ export const FloatingActions = memo(function FloatingActions({
   collapsedQuestion,
 }: FloatingActionsProps) {
   return (
-    <div className="flex items-center justify-center gap-2">
+    <div className="flex items-center justify-center gap-2 pointer-events-none">
       {/* Collapsed Permission Capsule */}
       <PresenceItem show={!!collapsedPermission}>
         {collapsedPermission && (
@@ -137,11 +137,11 @@ export const CollapsedCapsule = memo(function CollapsedCapsule({
 }: CollapsedCapsuleProps) {
   const { t } = useTranslation(['chat', 'common'])
   return (
-    <div className="flex items-center justify-center gap-2">
+    <div className="flex items-center justify-center gap-2 pointer-events-none">
       <button
         type="button"
         onClick={onExpand}
-        className="flex items-center gap-1.5 px-3 h-[32px] rounded-full glass border border-border-200/50 shadow-lg text-text-300 hover:text-text-200 hover:bg-bg-000 active:scale-95 transition-all"
+        className="flex items-center gap-1.5 px-3 h-[32px] rounded-full glass border border-border-200/50 shadow-lg text-text-300 hover:text-text-200 hover:bg-bg-000 active:scale-95 transition-all pointer-events-auto"
       >
         <ArrowUpIcon size={14} />
         <span className="text-[length:var(--fs-xs)]">{t('inputActions.reply')}</span>
