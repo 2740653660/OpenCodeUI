@@ -1406,21 +1406,20 @@ function InputBoxComponent({
           </div>
         </div>
 
-        {/* Footer: 输入框下方固定高度区域，内容垂直水平居中 */}
-        {!isCollapsed && (
-          <div
-            ref={footerRef}
-            onPointerDown={handleContainerPointerDown}
-            className="h-8 flex items-center justify-center"
-          >
-            <InputFooter
-              paneId={paneId}
-              sessionId={sessionId}
-              onNewChat={onNewChat}
-              inputContainerRef={inputContainerRef}
-            />
-          </div>
-        )}
+        {/* Footer: 常驻 DOM，收起用 hidden。避免 isCollapsed 抖一下时卸载整行（自动放行/免责声明闪烁） */}
+        <div
+          ref={footerRef}
+          onPointerDown={handleContainerPointerDown}
+          className={`h-8 flex items-center justify-center ${isCollapsed ? 'hidden' : ''}`}
+          aria-hidden={isCollapsed || undefined}
+        >
+          <InputFooter
+            paneId={paneId}
+            sessionId={sessionId}
+            onNewChat={onNewChat}
+            inputContainerRef={inputContainerRef}
+          />
+        </div>
       </div>
     </div>
   )

@@ -434,6 +434,9 @@ export const ChatArea = memo(
       const shouldAnchorBottom = () => !userScrolledRef.current
 
       // ── 滚动状态（同步计算，不使用 rAF） ──
+      // prevState.bottom 仍是几何贴底，给 scrollToBottomIfAtBottom 用。
+      // onAtBottomChange 给输入区 dock / 回底按钮：只反映 !userScrolled（用户意图），
+      // 不跟 dist——流式长高那一帧 dist 会越过阈值，会把 isCollapsed 抖翻。
       const prevState = useRef({ overflow: false, bottom: true, jump: false })
       const computeScrollState = useCallback(() => {
         const el = scrollRef.current
@@ -446,9 +449,13 @@ export const ChatArea = memo(
         const p = prevState.current
         if (p.overflow !== overflow || p.bottom !== bottom || p.jump !== jump) {
           prevState.current = { overflow, bottom, jump }
-          onAtBottomRef.current?.(bottom)
         }
       }, [])
+
+      // 输入区折叠 / 回底按钮：只跟用户是否主动离底
+      useEffect(() => {
+        onAtBottomRef.current?.(!auto.userScrolled)
+      }, [auto.userScrolled])
 
       // ── Virtualizer ──
       // parent key={sessionId} remount 后，这里只在 mount 时读一次 cache

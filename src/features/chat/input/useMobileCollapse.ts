@@ -72,6 +72,8 @@ export function useMobileCollapse({
   const [isFocused, setIsFocused] = useState(false)
 
   // 直接计算是否收起（纯派生值）
+  // isAtBottom 语义是「用户未主动离底」（ChatArea 用 !userScrolled），不是几何 dist。
+  // 流式贴底跟随期间 dist 会抖，但 userScrolled 仍为 false → 不收起，Footer 不闪。
   const hasPendingDialogs = !!collapsedPermission || !!collapsedQuestion
   const isCollapsed = enabled && !isAtBottom && !hasContent && !isFocused && !hasPendingDialogs
 
