@@ -284,7 +284,10 @@ export function ServiceSettings() {
         {envVars.length > 0 ? (
           <div className="flex flex-col gap-1.5">
             {envVars.map((env, idx) => (
-              <div key={idx} className="flex items-center gap-1.5">
+              <div
+                key={idx}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1.5fr)_auto] items-center gap-1.5 sm:flex sm:items-center"
+              >
                 <input
                   type="text"
                   value={env.key}
@@ -294,7 +297,7 @@ export function ServiceSettings() {
                     serviceStore.setEnvVars(updated)
                   }}
                   placeholder={t('service.keyPlaceholder')}
-                  className={`${settingsFieldClass} w-[120px] shrink-0 font-mono text-[length:var(--fs-xs)]`}
+                  className={`${settingsFieldClass} min-w-0 font-mono text-[length:var(--fs-xs)] sm:w-[120px] sm:shrink-0`}
                 />
                 <span className="text-text-500 text-[length:var(--fs-xs)] shrink-0">=</span>
                 <input
@@ -306,7 +309,7 @@ export function ServiceSettings() {
                     serviceStore.setEnvVars(updated)
                   }}
                   placeholder={t('service.valuePlaceholder')}
-                  className={`${settingsFieldClass} flex-1 font-mono text-[length:var(--fs-xs)]`}
+                  className={`${settingsFieldClass} min-w-0 font-mono text-[length:var(--fs-xs)] sm:flex-1`}
                 />
                 <button
                   type="button"
