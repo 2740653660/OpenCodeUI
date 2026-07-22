@@ -78,9 +78,11 @@ export function useAutoScroll(bottomThreshold = 10) {
       return
     }
     if (max - el.scrollTop < bottomThreshold) {
-      // isAuto 守卫：流式增长推回底部（程序滚动，isAuto=true）不清 userScrolled。
-      // 用户真实滚动回底（isAuto=false）才清，恢复贴底跟随。
-      if (userScrolledRef.current && !isAuto(el)) setScrolled(false)
+      // 用户已离底时，只有用户主动滚回底才清 userScrolled。
+      // 程序滚动路径（resizeItem → queueMicrotask）受 shouldAnchorBottom 守卫，
+      // 用户离底时不会产生自动回底滚动——所以 isAuto 标记的 scroll 事件到达
+      // 这里只能是用户真实手势，直接清。
+      if (userScrolledRef.current) setScrolled(false)
       return
     }
     if (!userScrolledRef.current && isAuto(el)) {
@@ -93,16 +95,19 @@ export function useAutoScroll(bottomThreshold = 10) {
   const handleWheel = useCallback((e: WheelEvent) => {
     const el = scrollElRef.current
     if (!el) return
+    const max = el.scrollHeight - el.clientHeight
+    // 容器无溢出时忽略所有 wheel 事件——空白页 spacer 产生的小溢出不该触发折叠
+    if (max <= 1) return
     if (e.deltaY >= 0) {
       // 下滚回底时恢复贴底跟随：用户主动下滚到阈值内才清 userScrolled。
       // 流式增长推回不会走这里（不是 wheel 事件）。
       if (userScrolledRef.current) {
-        const max = el.scrollHeight - el.clientHeight
         if (max - el.scrollTop < bottomThreshold) setScrolled(false)
       }
       return
     }
-    // 上滚立刻离底
+    // 上滚立刻离底。清除 auto 标记避免后续 scroll 事件被误判为程序滚动。
+    autoMark.current = undefined
     const nested = (e.target instanceof Element ? e.target : undefined)?.closest('[data-scrollable]')
     if (nested && nested !== el) return
     // 直接写 ref，不等 React re-render——同帧的 RO/measure 必须立刻看到离底
