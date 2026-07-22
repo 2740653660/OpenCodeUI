@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { createRef } from 'react'
 import { describe, expect, it } from 'vitest'
 import { EXPAND_MOTION } from '../../constants/expandMotion'
 import {
@@ -40,5 +41,22 @@ describe('messageExpand', () => {
     expect(screen.getByText('body')).toBeInTheDocument()
     const outer = screen.getByText('body').parentElement?.parentElement
     expect(outer?.className).toContain('grid-rows-[1fr]')
+  })
+
+  it('keeps compositor refs on the actual body node when requested', () => {
+    const contentRef = createRef<HTMLDivElement>()
+    render(
+      <MessageExpandPanel
+        open
+        contentRef={contentRef}
+        contentClassName="body-padding"
+        innerClassName="overflow-hidden"
+      >
+        <span>body</span>
+      </MessageExpandPanel>,
+    )
+
+    expect(contentRef.current?.className).toBe('body-padding')
+    expect(contentRef.current?.parentElement?.className).toBe('overflow-hidden')
   })
 })

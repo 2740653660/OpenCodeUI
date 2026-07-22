@@ -63,6 +63,8 @@ export interface MessageExpandPanelProps {
   /** compositor 桌面/Android 切换时的 panel class */
   panelClassName?: string
   contentRef?: Ref<HTMLDivElement | null>
+  /** contentRef 所在的实际 body 节点 class；未提供时 ref 仍挂在 inner shell */
+  contentClassName?: string
   /** 横向放行 clip，思考/过程壳用 */
   clip?: boolean
   className?: string
@@ -80,6 +82,7 @@ export function MessageExpandPanel({
   animate = true,
   panelClassName = MSG_EXPAND.panel,
   contentRef,
+  contentClassName,
   clip = false,
   className,
   innerClassName = 'min-h-0 min-w-0 overflow-hidden',
@@ -92,8 +95,14 @@ export function MessageExpandPanel({
 
   return (
     <div className={className ? `${outerClass} ${className}` : outerClass}>
-      <div ref={contentRef} className={innerClassName} style={style}>
-        {children}
+      <div ref={contentClassName ? undefined : contentRef} className={innerClassName} style={style}>
+        {contentClassName ? (
+          <div ref={contentRef} className={contentClassName}>
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </div>
     </div>
   )

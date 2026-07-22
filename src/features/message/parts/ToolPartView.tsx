@@ -232,8 +232,9 @@ export const ToolPartView = memo(function ToolPartView({
       panelClassName={panelClassName}
       contentRef={expandContentRef}
       innerClassName="overflow-hidden min-h-0"
+      contentClassName={padClass}
     >
-      {shouldRenderBody && <div className={padClass}>{bodyContent}</div>}
+      {shouldRenderBody && bodyContent}
     </MessageExpandPanel>
   )
 
