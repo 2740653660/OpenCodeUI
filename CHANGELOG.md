@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.6.35] - 2026-07-24
+
+- fix(pwa): manifest 使用相对路径，修复子路径部署下 start_url 指向根域 (be8fa62b)
+- fix(settings): make service env var value inputs usable on narrow widths (5cad205d)
+- fix(message): preserve Android expand body rendering (78fcc27b)
+- fix(chat): 修复输入框折叠的两个滚动态bug (a7d6d75e)
+- fix(chat): stop InputFooter flicker from streaming dock collapse (cbdcc364)
+- refactor(message): dedupe ToolGroup tool map and document spacing parity (22227c23)
+- refactor(message): share MessageExpandPanel shell and expand motion tokens (45764dab)
+- fix(ui): fix expanded Thinking shimmer sweep on short labels (750099b9)
+- refactor(message): unify expand animation tokens across message stream (92389673)
+- fix(ui): tighten row padding between consecutive assistant messages (75fe97d1)
+- fix(ui): unify message stack gap and step-finish spacing (7c2652a1)
+- refactor(message): extract shared spacing contract for collapsible blocks (ed7c66b9)
+- fix(chat): make collapsed input dock click-through except capsule (8911b67a)
+- fix(ui): 统一思考块与工具步骤块间距，修复展开态流光动画 (1864e4bb)
+- fix(ui): 优化内嵌提问选项勾选框与输入框对齐 (f9868878)
+- fix(message): 优化思考折叠预览与间距 (f63acb62)
+
 ## [v0.6.34] - 2026-07-19
 
 - fix(message): markdown 思考折叠时渲染单行预览 (5505c2d3)
