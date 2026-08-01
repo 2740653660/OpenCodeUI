@@ -4,9 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（形如 v0.6.35-p1，将作为标签和发布名）'
+        required: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -162,7 +167,7 @@ jobs:
 
       - name: Build and sign APK
         run: |
-          VERSION=${{ github.ref_name }}
+          VERSION=${{ inputs.version || github.ref_name }}
           BT="$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | tail -1)"
 
           npx tauri android build --apk --target ${{ matrix.target }}
@@ -218,7 +223,7 @@ jobs:
       - name: Extract changelog
         id: changelog
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ inputs.version || github.ref_name }}"
           BODY=$(sed -n "/^## \[${TAG}\]/,/^## \[/{ /^## \[${TAG}\]/d; /^## \[/d; p; }" CHANGELOG.md)
           BODY=$(echo "$BODY" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
           if [ -z "$BODY" ]; then
@@ -230,8 +235,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: 'OpenCodeUI ${{ github.ref_name }}'
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: 'OpenCodeUI ${{ inputs.version || github.ref_name }}'
           body_path: /tmp/release-body.md
           files: artifacts/*
           draft: false
