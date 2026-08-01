@@ -65,6 +65,37 @@
     "deleteServer": "Delete Server",
     "deleteServerConfirm": "Remove \"{{name}}\" from the server list? This cannot be undone."
   },
+  "restart": {
+    "title": "Restart Service",
+    "desc": "One-click restart of the OpenCode service on the current server. The UI reconnects automatically after it comes back.",
+    "commandLabel": "Restart command",
+    "commandPlaceholder": "e.g. systemctl restart opencode",
+    "commandHelp": "Leave empty to auto-detect a systemctl service; otherwise fill in the command here.",
+    "warning": "This runs a remote command on the server and may interrupt the service and running sessions. Do not include passwords in the command.",
+    "confirmTitle": "Restart service?",
+    "confirmDesc": "The following command will be executed on server {{name}} ({{url}}):",
+    "confirmText": "Restart",
+    "button": "Restart service",
+    "cancelText": "Cancel restart",
+    "phase": {
+      "preflight": "Checking server status...",
+      "executing": "Executing restart command...",
+      "waiting": "Disconnected, waiting for the service to recover..."
+    },
+    "success": "Restart succeeded. The service is back and the UI has reconnected.",
+    "unconfirmed": "Command finished, but no service restart was observed. Please verify the command.",
+    "commandFailed": "Command failed (exit code {{code}}):",
+    "notRecovered": "The service did not recover in time. You may need to SSH into the server.",
+    "timeout": "Operation timed out; restart outcome unknown.",
+    "unauthorized": "Server authentication failed. Check the credentials.",
+    "offline": "The server is unreachable. Make sure the service is running.",
+    "locked": "Another window is restarting the server. Please wait.",
+    "emptyCommand": "No restart command configured and no systemctl service was detected. Please fill in the command.",
+    "outputLabel": "Command output",
+    "cancel": "Cancel",
+    "cancelled": "Restart cancelled.",
+    "execError": "Could not start command execution on the server. Check the server status."
+  },
   "chat": {
     "pathsFormatting": "Paths & Formatting",
     "pathsFormattingDesc": "How file paths are displayed in messages and tools",
