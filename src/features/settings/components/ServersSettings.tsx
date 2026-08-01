@@ -14,6 +14,7 @@ import {
 import { useServerStore, useRouter } from '../../../hooks'
 import { messageStore } from '../../../store'
 import { settingsFieldClass, SettingsSection } from './SettingsUI'
+import { RestartServerCard } from './RestartServerCard'
 import type { ServerConfig, ServerHealth } from '../../../store/serverStore'
 
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/
@@ -541,65 +542,69 @@ export function ServersSettings() {
   )
 
   return (
-    <SettingsSection
-      title={t('servers.connections')}
-      description={t('servers.connectionsDesc')}
-      actions={
-        <div className="flex items-center gap-2">
-          <button
-            onClick={checkAllHealth}
-            className="flex items-center justify-center w-7 h-7 rounded-md text-text-400 hover:text-text-200 hover:bg-bg-200/70 transition-colors"
-            title={t('common:refresh')}
-            aria-label={t('common:refresh')}
-          >
-            <RetryIcon size={14} />
-          </button>
-          <button
-            onClick={() => setAddingServer(true)}
-            disabled={addingServer}
-            className="h-7 px-2.5 rounded-md text-[length:var(--fs-sm)] font-medium text-accent-main-100 hover:bg-accent-main-100/10 transition-colors disabled:opacity-40"
-          >
-            {t('common:add')}
-          </button>
+    <>
+      <SettingsSection
+        title={t('servers.connections')}
+        description={t('servers.connectionsDesc')}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={checkAllHealth}
+              className="flex items-center justify-center w-7 h-7 rounded-md text-text-400 hover:text-text-200 hover:bg-bg-200/70 transition-colors"
+              title={t('common:refresh')}
+              aria-label={t('common:refresh')}
+            >
+              <RetryIcon size={14} />
+            </button>
+            <button
+              onClick={() => setAddingServer(true)}
+              disabled={addingServer}
+              className="h-7 px-2.5 rounded-md text-[length:var(--fs-sm)] font-medium text-accent-main-100 hover:bg-accent-main-100/10 transition-colors disabled:opacity-40"
+            >
+              {t('common:add')}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-1.5">
+          {orderedServers.map(s => (
+            <ServerItem
+              key={s.id}
+              server={s}
+              health={getHealth(s.id)}
+              isActive={activeServer?.id === s.id}
+              onSelect={() => handleSelectServer(s.id)}
+              onDelete={() => removeServer(s.id)}
+              onEdit={updates => {
+                const auth = updates.password
+                  ? { username: updates.username || 'opencode', password: updates.password }
+                  : undefined
+                updateServer(s.id, { name: updates.name, url: updates.url, auth })
+                void checkHealth(s.id)
+              }}
+              onCheckHealth={() => void checkHealth(s.id)}
+            />
+          ))}
+
+          {addingServer && (
+            <AddServerForm
+              onAdd={(n, u, user, pass) => {
+                const auth = pass ? { username: user || 'opencode', password: pass } : undefined
+                const s = addServer({ name: n, url: u, auth })
+                setAddingServer(false)
+                void checkHealth(s.id)
+              }}
+              onCancel={() => setAddingServer(false)}
+            />
+          )}
+
+          {servers.length === 0 && !addingServer && (
+            <div className="text-[length:var(--fs-md)] text-text-400 text-center py-8">{t('servers.noServersConfigured')}</div>
+          )}
         </div>
-      }
-    >
-      <div className="space-y-1.5">
-        {orderedServers.map(s => (
-          <ServerItem
-            key={s.id}
-            server={s}
-            health={getHealth(s.id)}
-            isActive={activeServer?.id === s.id}
-            onSelect={() => handleSelectServer(s.id)}
-            onDelete={() => removeServer(s.id)}
-            onEdit={updates => {
-              const auth = updates.password
-                ? { username: updates.username || 'opencode', password: updates.password }
-                : undefined
-              updateServer(s.id, { name: updates.name, url: updates.url, auth })
-              void checkHealth(s.id)
-            }}
-            onCheckHealth={() => void checkHealth(s.id)}
-          />
-        ))}
+      </SettingsSection>
 
-        {addingServer && (
-          <AddServerForm
-            onAdd={(n, u, user, pass) => {
-              const auth = pass ? { username: user || 'opencode', password: pass } : undefined
-              const s = addServer({ name: n, url: u, auth })
-              setAddingServer(false)
-              void checkHealth(s.id)
-            }}
-            onCancel={() => setAddingServer(false)}
-          />
-        )}
-
-        {servers.length === 0 && !addingServer && (
-          <div className="text-[length:var(--fs-md)] text-text-400 text-center py-8">{t('servers.noServersConfigured')}</div>
-        )}
-      </div>
-    </SettingsSection>
+      <RestartServerCard />
+    </>
   )
 }

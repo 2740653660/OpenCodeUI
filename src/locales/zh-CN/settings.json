@@ -65,6 +65,37 @@
     "deleteServer": "删除服务器",
     "deleteServerConfirm": "确定从列表中移除「{{name}}」？此操作无法撤销。"
   },
+  "restart": {
+    "title": "重启服务",
+    "desc": "一键重启当前服务器上的 OpenCode 服务，重启后界面会自动重连。",
+    "commandLabel": "重启命令",
+    "commandPlaceholder": "例如 systemctl restart opencode",
+    "commandHelp": "留空时点击按钮会自动尝试识别 systemctl 服务；识别不到时请在此填写命令",
+    "warning": "此操作会在服务器上执行远程命令，可能导致服务中断，并会中断正在进行的会话。请勿在命令中包含密码。",
+    "confirmTitle": "确认重启服务？",
+    "confirmDesc": "将在服务器 {{name}}（{{url}}）上执行以下命令：",
+    "confirmText": "确认重启",
+    "button": "重启服务",
+    "cancelText": "取消重启",
+    "phase": {
+      "preflight": "正在检查服务器状态…",
+      "executing": "正在执行重启命令…",
+      "waiting": "已断开，等待服务恢复…"
+    },
+    "success": "重启成功，服务已恢复，界面已自动重连。",
+    "unconfirmed": "命令执行完成，但未观察到服务重启，请确认命令是否正确。",
+    "commandFailed": "命令执行失败（退出码 {{code}}）：",
+    "notRecovered": "服务未在时限内恢复，可能需要 SSH 到服务器检查。",
+    "timeout": "操作超时，未确认是否重启成功。",
+    "unauthorized": "服务器认证失败，请检查账号密码。",
+    "offline": "服务器当前不可达，请先确认服务运行正常。",
+    "locked": "另一个窗口正在进行重启，请稍候。",
+    "emptyCommand": "未填写重启命令，且自动识别未找到可用的 systemctl 服务。请填写重启命令。",
+    "outputLabel": "命令输出",
+    "cancel": "取消",
+    "cancelled": "已取消重启。",
+    "execError": "无法在服务器上启动命令执行，请检查服务器状态。"
+  },
   "chat": {
     "pathsFormatting": "路径和格式",
     "pathsFormattingDesc": "消息和工具中文件路径的显示方式",
