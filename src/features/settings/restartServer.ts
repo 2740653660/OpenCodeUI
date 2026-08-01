@@ -69,7 +69,8 @@ export function buildPtyRestartScript(command: string): string {
   return `{ ${command}
 rc=$?
 printf '\\n${RESTART_DONE_MARKER}:%s\\n' "$rc"
-} 2>&1`
+} 2>&1
+`
 }
 
 /**

@@ -19,6 +19,8 @@ describe('buildPtyRestartScript', () => {
     expect(script).toContain('rc=$?')
     expect(script).toContain(`printf '\\n${RESTART_DONE_MARKER}:%s\\n' "$rc"`)
     expect(script).toContain('} 2>&1')
+    // 必须以换行结尾:交互 shell 中无尾换行的行不会被提交执行(真实环境验证过的 bug)
+    expect(script.endsWith('\n')).toBe(true)
 
     // 原始命令、rc 捕获、marker 打印、stderr 合并依次出现
     const commandIndex = script.indexOf('systemctl restart opencode')
